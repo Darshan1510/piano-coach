@@ -80,6 +80,8 @@ class MidiService:
         self.held: dict[tuple[int, int], int] = {}  # (channel, raw pitch) -> calibrated pitch
         self.sustain = False
         self.local_off = False
+        # echo_filter(press, channel, raw, t) -> True = drop (the app's own song note came back).
+        self.echo_filter: Callable[[bool, int, int, float], bool] | None = None
 
     # ------------------------------------------------------------------ life cycle
 
@@ -327,6 +329,16 @@ class MidiService:
             out.send(msg)
             return True
 
+    def note_message(self, pitch: int, velocity: int) -> mido.Message:
+        """A note for the keyboard's own speaker (song playback). Velocity 0 = note off.
+
+        The calibration offset is taken back, so the keyboard plays the key that the app shows.
+        """
+        raw = pitch - self.offset
+        if not 0 <= raw <= 127:
+            raw = pitch
+        return mido.Message("note_on", note=raw, velocity=max(0, min(127, int(velocity))), channel=self.channel or 0)
+
     def play_test_note(self, pitch: int = config.MIDDLE_C, velocity: int = 90, seconds: float = 0.8) -> bool:
         """Setup step 5: play a note on the keyboard's own speaker."""
         ch = self.channel or 0
@@ -425,6 +437,11 @@ class MidiService:
             # A key that is down (in self.held) always gets its note_off, on any channel.
             # If not, a key pressed before the channel was known stays lit forever.
             releases_held = kind != "control_change" and not is_press and (msg.channel, msg.note) in self.held
+
+            # A song note that the app sent to the keyboard and that came back (echo): not a key.
+            if (kind != "control_change" and not releases_held and self.echo_filter is not None
+                    and self.echo_filter(is_press, msg.channel, msg.note, t)):
+                return None
 
             # Channel filter. Exceptions: the release of a held key, and the middle C step
             # (it finds the channel). The "test" step uses the known channel, if there is one.

@@ -10,3 +10,9 @@
 - UI: a short tour on the first start that points to the sidebar items.
 - UI: keyboard shortcuts for the sidebar items (Cmd+1…Cmd+5).
 - UI: color the keys left of middle C green and right of it blue in free play, as a hint for the hands (needs a lesson first).
+- Wait mode with the mouse: click the screen keys as input (to try songs without the keyboard).
+- Lyrics under the falling notes (PLAN 7.4 Rule 1 mentions song words) — needs a `words` field in the song format.
+- Latency calibration for the click (PLAN 4: tap with the click) — the click is not corrected for audio output delay yet.
+- Remember the practice options (speed, the click, count-in) per song.
+- Ode to Joy part B (needs the low G: a hand move), as a Level 3 or 4 version.
+- A short "Got it" card the first time a hand move or a spread hand appears (skill moments are Phase 3).

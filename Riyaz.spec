@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for Riyaz. The Makefile calls this file (one place for the build flags).
 # Same as these flags:
-#   --onedir --windowed --add-data static:static
+#   --onedir --windowed --add-data static:static --add-data data/songs:data/songs
 #   --collect-all uvicorn fastapi starlette webview websockets mido rtmidi
 #   --hidden-import mido.backends.rtmidi --copy-metadata mido
 import os
@@ -18,7 +18,7 @@ if not os.environ.get("PYINSTALLER_CONFIG_DIR"):
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
-datas = [("static", "static")]
+datas = [("static", "static"), ("data/songs", "data/songs")]
 binaries = []
 hiddenimports = ["mido.backends.rtmidi"]
 

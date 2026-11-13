@@ -15,9 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse
 
-from . import clock, config
+from . import clock, config, songs
 from .db import Store
 from .midi_io import MidiService
+from .practice import Practice, PracticeError, clamp_speed
 
 log = logging.getLogger("riyaz.server")
 
@@ -130,13 +131,22 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     async def lifespan(app: FastAPI):
         hub.attach(asyncio.get_running_loop())
         store = Store()
-        midi = MidiService(store, sink=hub.publish, poll_interval=poll_interval)
-        state.update(store=store, midi=midi)
+        practice = Practice(hub.publish)
+
+        def sink(evt: dict) -> None:
+            hub.publish(evt)  # the UI gets the key first (live keyboard)
+            practice.on_midi(evt)  # then the wait-mode matcher (it can send practice events)
+
+        midi = MidiService(store, sink=sink, poll_interval=poll_interval)
+        practice.midi = midi
+        midi.echo_filter = practice.echo.is_echo  # song notes sent to the keyboard that come back
+        state.update(store=store, midi=midi, practice=practice)
         if start_midi:
             await asyncio.to_thread(midi.start)
         try:
             yield
         finally:
+            await asyncio.to_thread(practice.close)
             await asyncio.to_thread(midi.stop)
             store.close()
 
@@ -181,7 +191,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         try:
             midi().start_capture(step)
         except ValueError:
-            raise HTTPException(404, "Unknown step.")
+            raise HTTPException(404, "The app does not know this setup step.")
         return {"ok": True, "step": step}
 
     @app.post("/api/calibration/reset")
@@ -193,6 +203,90 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     async def output_test_note():
         ok = await asyncio.to_thread(midi().play_test_note)
         return {"ok": ok}
+
+    # ---------------------------------------------------------------- songs and practice (Phase 2)
+
+    def practice() -> Practice:
+        return state["practice"]
+
+    @app.get("/api/songs")
+    async def list_songs():
+        return {"songs": await asyncio.to_thread(songs.list_summaries)}
+
+    @app.get("/api/songs/{song_id}")
+    async def get_song(song_id: str):
+        song = await asyncio.to_thread(songs.get, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        return song
+
+    @app.get("/api/practice")
+    async def practice_state():
+        return practice().state()
+
+    # Practice calls can send MIDI (notes off) and wait for the MIDI thread: run them in a thread.
+
+    @app.post("/api/practice/start")
+    async def practice_start(body: dict = Body(...)):
+        song = await asyncio.to_thread(songs.get, str(body.get("song_id", "")))
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        output = body.get("output", "mac")
+        if output == "keyboard" and midi().status()["output"] is None:
+            raise HTTPException(409, "The app cannot send notes to the keyboard. "
+                                     "Turn off \"Play the song on the keyboard speaker\".")
+        hands = body.get("hands")
+        try:
+            return await asyncio.to_thread(
+                practice().start,
+                song, mode=body.get("mode", "wait"), hands=["R"] if hands is None else hands,
+                speed=body.get("speed", 1.0), section=body.get("section"),
+                count_in=bool(body.get("count_in", True)), accompany=bool(body.get("accompany", True)),
+                output=output)
+        except PracticeError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/practice/pause")
+    async def practice_pause(body: dict = Body(default={})):
+        run = body.get("run")
+        return await asyncio.to_thread(
+            practice().pause, at_beat=body.get("at_beat"), reason=str(body.get("reason", "user"))[:20],
+            run=run if isinstance(run, int) and not isinstance(run, bool) else None)
+
+    @app.post("/api/practice/resume")
+    async def practice_resume():
+        return await asyncio.to_thread(practice().resume)
+
+    @app.post("/api/practice/stop")
+    async def practice_stop():
+        return await asyncio.to_thread(practice().stop)
+
+    @app.post("/api/practice/speed")
+    async def practice_speed(body: dict = Body(...)):
+        return await asyncio.to_thread(practice().set_speed, body.get("speed", 1.0))
+
+    # Practice options that stay after a restart (speed, the click, the count-in). One user.
+
+    def practice_options() -> dict:
+        saved = state["store"].get("practice.options", None)
+        saved = saved if isinstance(saved, dict) else {}
+        return {"speed": clamp_speed(saved.get("speed", 1.0)), "click": bool(saved.get("click", False)),
+                "count_in": bool(saved.get("count_in", True))}
+
+    @app.get("/api/settings/practice")
+    async def get_practice_options():
+        return practice_options()
+
+    @app.post("/api/settings/practice")
+    async def set_practice_options(body: dict = Body(...)):
+        opts = practice_options()
+        if "speed" in body:
+            opts["speed"] = clamp_speed(body["speed"])
+        for name in ("click", "count_in"):
+            if isinstance(body.get(name), bool):
+                opts[name] = body[name]
+        await asyncio.to_thread(state["store"].set, "practice.options", opts)
+        return opts
 
     @app.get("/api/debug/latency")
     async def get_latency():

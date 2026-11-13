@@ -3,8 +3,11 @@
 A daily piano-practice coach for a MIDI keyboard (built for the Yamaha YPT-320) on macOS.
 Riyaz is Hindi/Urdu for "daily practice".
 
-Phase 1 (this version): MIDI connection, setup and calibration, a live 61-key keyboard on the
-screen with note names and chord names, and a Mac piano sound. See `PLAN.md` and `PROGRESS.md`.
+Phase 1: MIDI connection, setup and calibration, a live 61-key keyboard on the screen with note
+names and chord names, and a Mac piano sound.
+Phase 2 (this version): 6 built-in songs (Levels 1-2), falling notes with finger numbers and a hand
+outline, Watch and Play (wait) modes, hands, speed, the click, count-in and "Repeat a part".
+See `PLAN.md` and `PROGRESS.md`.
 
 ## Install (release build)
 
@@ -62,7 +65,14 @@ uv run tools/fake_player.py --repeat 0      # virtual port "Riyaz Fake Keyboard"
 uv run tools/fake_player.py --shift 12      # as if OCTAVE/TRANSPOSE were +12
 uv run tools/fake_player.py --noise         # also clock, start/stop, sysex, other channel
 uv run tools/measure_latency.py             # key-to-app delay (app must run)
+uv run tools/fake_player.py --song ode-to-joy                       # play a song's right hand in time
+uv run tools/fake_player.py --song all --follow http://127.0.0.1:8020 --wrong 2
+                                            # wait mode for every song in the running app (2 wrong keys each)
+uv run tools/make_test_song.py              # 200-note test song in .cache/test-songs/
+RIYAZ_EXTRA_SONG_DIR=.cache/test-songs uv run main.py   # show test songs in the Songs list
 ```
+
+Songs are JSON files in `data/songs/` (format: `PLAN.md` 5.1; `start` and `dur` in beats).
 
 ## Build
 

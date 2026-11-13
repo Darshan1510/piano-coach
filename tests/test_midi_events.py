@@ -318,3 +318,28 @@ def test_stop_sends_pending_test_note_off_and_cancels_timer(store, events):
     assert not svc.play_test_note()
     assert not svc.send(mido.Message("note_on", note=60, velocity=0))
     assert svc._outport is None and len(backend.opened_out) == n_opened
+
+
+def test_echo_of_app_song_note_is_dropped_and_real_press_counts(store, events):
+    """A song note that the app sends to the keyboard and that comes back (MIDI thru) is no key."""
+    from riyaz import config
+    from riyaz.practice import EchoGuard
+
+    svc, _ = make(store, events)
+    guard = EchoGuard()
+    svc.echo_filter = guard.is_echo
+    guard.sent(60, 10.0)  # the app sent raw note 60 at t = 10.0
+    assert svc.handle_message(on(60), t=10.0 + config.ECHO_WINDOW_S / 2) is None  # the echo
+    assert svc.handle_message(on(60, 0), t=10.4) is None  # its note off
+    assert types(events, "note_on") == [] and types(events, "note_off") == [] and svc.held == {}
+    # The user presses the same key after the window: it counts.
+    assert svc.handle_message(on(60), t=10.0 + config.ECHO_WINDOW_S + 0.2)["type"] == "note_on"
+    assert svc.handle_message(on(60, 0), t=11.0)["type"] == "note_off"
+    # A different key at the time of a send is not an echo.
+    guard.sent(62, 20.0)
+    assert svc.handle_message(on(64), t=20.01)["type"] == "note_on"
+    # One send = one echo: a second note_on of the same key in the window counts.
+    guard.sent(65, 30.0)
+    assert svc.handle_message(on(65), t=30.01) is None
+    assert svc.handle_message(on(65, 0), t=30.02) is None
+    assert svc.handle_message(on(65), t=30.03)["type"] == "note_on"

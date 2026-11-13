@@ -1,5 +1,7 @@
 """HTTP + WebSocket tests (no CoreMIDI: MIDI start is off)."""
 
+import re
+
 import mido
 import pytest
 from fastapi.testclient import TestClient
@@ -69,3 +71,143 @@ def test_pedal_readout_hidden_by_default(client):
     assert 'id="pedal-box" class="readout-box small hidden"' in html
     js = client.get("/static/app.js").text
     assert '$("pedal-box").classList.remove("hidden")' in js
+
+
+# ---------------------------------------------------------------- Phase 2: songs and practice
+
+
+def test_songs_api(client):
+    songs = client.get("/api/songs").json()["songs"]
+    ids = [s["id"] for s in songs]
+    assert ids[:6] == ["mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle", "au-clair-de-la-lune",
+                       "frere-jacques", "london-bridge"]
+    song = client.get("/api/songs/ode-to-joy").json()
+    assert song["notes"][0]["pitch"] == 64 and song["hand_positions"][0]["thumb_pitch"] == 60
+    assert client.get("/api/songs/nope").status_code == 404
+
+
+def test_practice_api_and_wait_events(client):
+    midi = client.app_ref.state.riyaz["midi"]
+    with client.websocket_connect("ws://127.0.0.1:8020/ws") as ws:
+        assert ws.receive_json()["type"] == "status"
+        s = client.post("/api/practice/start", json={"song_id": "mary-had-a-little-lamb", "mode": "wait",
+                                                     "hands": ["R"], "count_in": False}).json()
+        assert s["type"] == "practice" and s["running"] and s["hold_beat"] == 0.0 and s["expected"][0]["pitch"] == 64
+        # wrong key: the UI gets note_on first, then practice_wrong; the song stays at stop 0
+        midi.handle_message(mido.Message("note_on", note=65, velocity=70))
+        kinds = []
+        while "practice_wrong" not in kinds or "keys" not in kinds:
+            kinds.append(ws.receive_json()["type"])
+        kinds = [k for k in kinds if k != "practice"]  # clock states (start, waiting) can come between
+        assert kinds[0] == "note_on" and sorted(kinds[1:]) == ["keys", "practice_wrong"]
+        assert client.get("/api/practice").json()["stop_index"] == 0
+        midi.handle_message(mido.Message("note_on", note=65, velocity=0))
+        midi.handle_message(mido.Message("note_on", note=64, velocity=70))
+        st = client.get("/api/practice").json()
+        assert st["stop_index"] == 1 and st["wrong"] == 1
+    p = client.post("/api/practice/pause", json={}).json()
+    assert p["paused"] and not p["running"]
+    assert client.post("/api/practice/resume").json()["running"]
+    assert client.post("/api/practice/speed", json={"speed": 0.5}).json()["speed"] == 0.5
+    assert client.post("/api/practice/stop").json()["song_id"] is None
+
+
+def test_practice_start_errors(client):
+    assert client.post("/api/practice/start", json={"song_id": "nope"}).status_code == 404
+    r = client.post("/api/practice/start", json={"song_id": "ode-to-joy", "hands": ["L"]})
+    assert r.status_code == 400
+    # no MIDI output in this test: the keyboard sound is not possible
+    r = client.post("/api/practice/start", json={"song_id": "ode-to-joy", "output": "keyboard"})
+    assert r.status_code == 409 and "Play the song on the keyboard speaker" in r.json()["detail"]
+    # a bad type is a bad request (400), not a server error (500)
+    for body in ({"hands": 5}, {"hands": "R"}, {"hands": [None]}, {"mode": 3}, {"section": "x"}):
+        r = client.post("/api/practice/start", json={"song_id": "ode-to-joy", **body})
+        assert r.status_code == 400, (body, r.status_code)
+
+
+def test_practice_options_are_kept(client):
+    assert client.get("/api/settings/practice").json() == {"speed": 1.0, "click": False, "count_in": True}
+    r = client.post("/api/settings/practice", json={"speed": 0.6, "click": True, "count_in": False}).json()
+    assert r == {"speed": 0.6, "click": True, "count_in": False}
+    # bad values: speed is clamped, a non-bool is ignored
+    r = client.post("/api/settings/practice", json={"speed": 99, "click": "yes"}).json()
+    assert r == {"speed": 1.5, "click": True, "count_in": False}
+    assert client.get("/api/settings/practice").json() == r
+    store = client.app_ref.state.riyaz["store"]
+    assert store.get("practice.options") == r  # in the settings database (stays after a restart)
+
+
+def test_practice_post_needs_own_origin(client):
+    r = client.post("/api/practice/start", json={"song_id": "ode-to-joy"},
+                    headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+
+
+# PLAN 7.4: words that a Level 1-3 user has not learned yet. "s?" also finds the plural.
+LOCKED = re.compile(r"\b(sharp|flat|major|minor|scale|interval|progression|bar|measure|beat|tempo|chord|"
+                    r"rest)s?\b", re.I)
+UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js")
+
+
+def shown_strings(src: str) -> list[str]:
+    """String literals in JS that can be user text. Comments are not shown.
+
+    Allowed (code, not text): a string with no space that is all lower case, or that has "-", "_",
+    "/", "." or "#" in it (ids, classes, event types, paths, keys like "minor").
+    """
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"^\s*//.*$", "", src, flags=re.M)
+    src = re.sub(r"\s//\s.*$", "", src, flags=re.M)  # comment at the end of a line
+    out = []
+    for a, b, c in re.findall(r'"([^"\n]*)"|`([^`]*)`|\'([^\'\n]*)\'', src):
+        text = re.sub(r"\$\{[^}]*\}", " ", a or b or c)
+        if " " not in text.strip() and (text == text.lower() or re.search(r"[-_/.#]", text)):
+            continue
+        out.append(text)
+    return out
+
+
+def test_practice_text_has_no_locked_words(client):
+    """PLAN 7.4: no locked word in the HTML, the UI scripts or the backend messages for the user."""
+    html = client.get("/").text
+    html = re.sub(r"<!--.*?-->|<script.*?</script>|<style.*?</style>", " ", html, flags=re.S)
+    visible = re.sub(r"<[^>]+>", " ", html)
+    attrs = " ".join(re.findall(r'(?:title|aria-label|placeholder|alt)="([^"]*)"', html))
+    assert not LOCKED.search(visible), LOCKED.search(visible)
+    assert not LOCKED.search(attrs), LOCKED.search(attrs)
+    for js in UI_FILES:
+        for text in shown_strings(client.get(js).text):
+            assert not LOCKED.search(text), (js, text)
+    for sid in ("mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle", "au-clair-de-la-lune",
+                "frere-jacques", "london-bridge"):
+        song = client.get(f"/api/songs/{sid}").json()
+        text = " ".join([song["title"]] + [s["name"] for s in song["sections"]])
+        assert not LOCKED.search(text), (sid, text)
+    for text in backend_user_messages():
+        assert not LOCKED.search(text), text
+        assert text[0].isupper() and text.rstrip('"').endswith("."), text  # a full sentence
+
+
+def backend_user_messages() -> list[str]:
+    """Texts in PracticeError(...) and HTTPException(...) calls in riyaz/ (the UI shows them)."""
+    import ast
+    from pathlib import Path
+
+    out = []
+    for path in (Path(__file__).resolve().parent.parent / "riyaz").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("PracticeError", "HTTPException"):
+                for arg in node.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        out.append(arg.value)
+    assert len(out) >= 8
+    return out
+
+
+def test_locked_word_check_finds_words():
+    """The check itself: it finds locked words in text and skips code names."""
+    assert shown_strings('a("chord-name"); b("minor"); c("Play the chord."); d(`Sharp ${x}`)') == [
+        "Play the chord.", "Sharp  "]
+    for word in ("bars", "Beat", "tempo", "F sharp", "flats", "minor", "scales", "rest"):
+        assert LOCKED.search(word), word
+    assert not LOCKED.search("sidebar rested barn")

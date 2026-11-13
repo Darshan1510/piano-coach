@@ -1,8 +1,10 @@
-// Riyaz UI: app shell (sidebar + top bar), home, free play keyboard, setup and calibration, settings.
+// Riyaz UI: app shell (sidebar + top bar), home, songs, practice, free play, setup, settings.
 
 import { Link } from "/static/js/ws.js";
 import { Piano } from "/static/js/audio.js";
-import { Keyboard, MIDDLE_C, noteName } from "/static/js/keyboard.js";
+import { Keyboard, MIDDLE_C, WORDS, shortKeyName } from "/static/js/keyboard.js";
+import { SongsScreen } from "/static/js/songs.js";
+import { PracticeScreen, radioKeys } from "/static/js/practice.js";
 
 const $ = (id) => document.getElementById(id);
 const link = new Link();
@@ -18,6 +20,7 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const ICONS = {
   home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+  songs: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   play: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v7M12 6v7M17 6v7"/>',
   setup: '<path d="M9 7V3M15 7V3"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
@@ -26,6 +29,7 @@ const ICONS = {
 
 const NAV = [
   { id: "home", label: "Home", icon: "home" },
+  { id: "songs", label: "Songs", icon: "songs" },
   { id: "play", label: "Free play", icon: "play" },
   { id: "setup", label: "Setup", icon: "setup" },
   { id: "settings", label: "Settings", icon: "settings", group: "bottom" },
@@ -45,14 +49,31 @@ function buildNav() {
 }
 buildNav();
 
+// Screens that are not in the sidebar: the sidebar item that stays active, and the page title.
+const SUB_SCREENS = { practice: { nav: "songs", title: "Practice" } };
+
 let current = null;
 function show(screen) {
+  if (current === "practice" && screen !== "practice") practice.hide();
   current = screen;
   for (const el of document.querySelectorAll(".screen")) el.classList.add("hidden");
   $(`screen-${screen}`).classList.remove("hidden");
-  for (const b of document.querySelectorAll(".nav-item")) b.classList.toggle("active", b.dataset.screen === screen);
-  $("page-title").textContent = NAV.find((n) => n.id === screen)?.label || "";
+  const navId = SUB_SCREENS[screen]?.nav || screen;
+  for (const b of document.querySelectorAll(".nav-item")) b.classList.toggle("active", b.dataset.screen === navId);
+  $("page-title").textContent = SUB_SCREENS[screen]?.title || NAV.find((n) => n.id === screen)?.label || "";
   if (screen === "about") updateDelayText();
+  if (screen === "songs") songsScreen.load();
+  if (screen === "practice") practice.show();
+}
+
+// FastAPI sends a string, or a list of {loc, msg} (422: bad request body). Show plain text.
+function errorText(detail, status) {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) => (d && typeof d.msg === "string" ? d.msg : "")).filter(Boolean);
+    if (msgs.length) return `The app did not accept the request (${msgs.join("; ")}).`;
+  }
+  return `The app cannot do this now (error ${status}). Try again.`;
 }
 
 async function api(path, body) {
@@ -62,7 +83,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || "Error");
+  if (!res.ok) throw new Error(errorText(data.detail, res.status));
   return data;
 }
 
@@ -82,6 +103,7 @@ function setTheme(theme) {
 setTheme(storageGet("riyaz.theme") === "light" ? "light" : "dark");
 $("theme-btn").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
 for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventListener("click", () => setTheme(b.dataset.themeChoice));
+new Set([...document.querySelectorAll("[data-theme-choice]")].map((b) => b.parentElement)).forEach(radioKeys);
 
 // ------------------------------------------------------------------ sound
 
@@ -120,6 +142,26 @@ function celebrate(anchor) {
   setTimeout(() => { box.innerHTML = ""; }, 900);
 }
 
+// ------------------------------------------------------------------ songs and practice (Phase 2)
+
+const practice = new PracticeScreen({
+  link, piano, api, celebrate, reducedMotion, getStatus: () => status, startSound,
+});
+const songsScreen = new SongsScreen($("song-list"), {
+  api,
+  onOpen: async (id) => {
+    try {
+      await practice.open(id);
+      show("practice");
+    } catch (err) {
+      console.error(err);
+    }
+  },
+});
+$("pr-back").addEventListener("click", () => show("songs"));
+$("pr-end-songs").addEventListener("click", () => show("songs"));
+window.riyaz.practice = practice; // for checks (frame rate) in the web inspector
+
 // ------------------------------------------------------------------ status (top bar, home, sidebar)
 
 function renderStatus(s) {
@@ -131,6 +173,7 @@ function renderStatus(s) {
   el.title = s.connected ? s.port : "";
   renderHome();
   renderCalibSummary();
+  practice.onStatus();
 }
 
 link.on("status", renderStatus);
@@ -149,11 +192,11 @@ function renderHome() {
 
   // Start card: one primary action.
   $("start-eyebrow").textContent = calibrated ? "Ready" : "Start here";
-  $("start-title").textContent = calibrated ? "Play freely" : "Set up your keyboard";
+  $("start-title").textContent = calibrated ? "Learn your first song" : "Set up your keyboard";
   $("start-text").textContent = calibrated
-    ? "Press keys on your keyboard. The app shows the name of each key and of keys that you play together."
+    ? "Start with \"Mary Had a Little Lamb\". The notes fall onto the keys. The song waits for you at each key."
     : "Do the 5 setup steps one time. Then the app knows your keyboard.";
-  $("start-btn").textContent = calibrated ? "Start free play" : "Start the setup";
+  $("start-btn").textContent = calibrated ? "Open the songs" : "Start the setup";
 
   // Keyboard card
   $("home-kb-pill").className = `pill ${status.connected ? "pill-ok" : "pill-bad"}`;
@@ -161,7 +204,12 @@ function renderHome() {
   $("home-kb-text").textContent = status.connected
     ? `The app uses this device: ${status.port}.`
     : "Connect the keyboard to the Mac. Then go to Setup and click \"Find my keyboard\".";
-  $("home-kb-btn").classList.toggle("hidden", status.connected && calibrated);
+  // Setup not done: "Open Setup". Else: free play (names of the keys that you press).
+  const ready = status.connected && calibrated;
+  $("home-kb-btn").textContent = ready ? "Open Free play" : "Open Setup";
+  $("home-live-text").textContent = status.connected
+    ? "Press a key on your keyboard. It lights up here."
+    : "When the keyboard is connected, the keys that you press light up here.";
 
   // Calibration card
   $("home-calib-pill").className = `pill ${calibrated ? "pill-ok" : "pill-warn"}`;
@@ -187,7 +235,7 @@ function renderHome() {
   } else {
     $("tile-touch").textContent = "Not done";
     $("tile-touch").classList.remove("ok");
-    $("tile-touch-hint").textContent = "Setup step 4 measures it.";
+    $("tile-touch-hint").textContent = "Setup step 4 checks it.";
   }
 
   // Sidebar: a dot on "Setup" while the setup is not done.
@@ -204,10 +252,15 @@ function renderHome() {
 }
 
 $("start-btn").addEventListener("click", () => {
-  if (status.calibration && status.calibration.calibrated) show("play");
+  if (status.calibration && status.calibration.calibrated) show("songs");
   else { show("setup"); goStep("connect"); }
 });
-$("home-kb-btn").addEventListener("click", () => { show("setup"); goStep("connect"); });
+$("home-kb-btn").addEventListener("click", () => {
+  if (status.connected && status.calibration && status.calibration.calibrated) show("play");
+  else { show("setup"); goStep("connect"); }
+});
+// Home: 2 octaves around middle C that light up live (C below middle C to the C above).
+const homeKb = new Keyboard($("home-keyboard"), { low: 48, high: 72, compact: true });
 
 // ------------------------------------------------------------------ free play
 
@@ -225,7 +278,7 @@ const sounding = new Set(); // released keys that still sound because of the ped
 function midiDown() { return [...down].sort((a, b) => a - b); }
 
 function showHeld(pitches) {
-  $("held-names").textContent = pitches.length ? pitches.map(noteName).join("  ") : "—";
+  $("held-names").textContent = pitches.length ? pitches.map(shortKeyName).join("  ") : "—";
 }
 
 link.on("note_on", (e) => {
@@ -234,6 +287,7 @@ link.on("note_on", (e) => {
   kb.setHeld(e.pitch, false);
   kb.setDown(e.pitch, true);
   miniKb.setDown(e.pitch, true);
+  homeKb.setDown(e.pitch, true);
   if ($("opt-mac-sound").checked) piano.noteOn(e.pitch, e.vel);
 });
 
@@ -241,6 +295,7 @@ link.on("note_off", (e) => {
   down.delete(e.pitch);
   kb.setDown(e.pitch, false);
   miniKb.setDown(e.pitch, false);
+  homeKb.setDown(e.pitch, false);
   if (pedal && e.reason !== "disconnect") {
     sounding.add(e.pitch);
     kb.setHeld(e.pitch, true);
@@ -266,8 +321,10 @@ link.on("cc", (e) => {
 // Server sends the held keys and the chord name (riyaz/theory.py) after each key event.
 link.on("keys", (e) => {
   showHeld(e.held);
+  // A name with a black key (C#, Bb) waits for the sharp/flat words (Level 4). The sound words stay.
+  const blackName = e.chord && !WORDS.sharpFlat && /[#b]/.test(e.chord.root + e.chord.bass);
   if (e.chord) {
-    $("chord-name").textContent = e.chord.name;
+    $("chord-name").textContent = blackName ? "—" : e.chord.name;
     $("chord-hint").textContent = e.chord.quality === "major" ? "happy sound"
       : e.chord.quality === "minor" ? "sad sound" : "";
   } else {
@@ -288,13 +345,22 @@ function goStep(s) {
   for (const p of document.querySelectorAll(".step-panel")) p.classList.toggle("hidden", p.dataset.panel !== s);
   for (const li of document.querySelectorAll("#stepper li")) {
     li.classList.toggle("active", li.dataset.step === s);
+    if (li.dataset.step === s) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
     li.classList.toggle("done", passed.has(li.dataset.step) && li.dataset.step !== s);
   }
   $("step-back").disabled = s === STEPS[0];
   $("step-next").textContent = s === STEPS.at(-1) ? "Finish" : "Next";
   renderNextButton();
 }
-for (const li of document.querySelectorAll("#stepper li")) li.addEventListener("click", () => goStep(li.dataset.step));
+for (const li of document.querySelectorAll("#stepper li")) {
+  // Keyboard users: Tab to a step, then Enter or Space.
+  li.tabIndex = 0;
+  li.setAttribute("role", "button");
+  li.addEventListener("click", () => goStep(li.dataset.step));
+  li.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goStep(li.dataset.step); }
+  });
+}
 $("step-back").addEventListener("click", () => goStep(STEPS[Math.max(0, STEPS.indexOf(step) - 1)]));
 $("step-next").addEventListener("click", () => {
   const i = STEPS.indexOf(step);

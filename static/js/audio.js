@@ -54,6 +54,35 @@ export class Piano {
     this.sampler.triggerRelease(midiToToneName(pitch), Tone.now());
   }
 
+  // ---- song playback (Phase 2). Times are AudioContext seconds (audioNow() + delay).
+
+  // Context time now, without the Tone.js look-ahead (Tone.now() adds about 0.1 s).
+  audioNow() {
+    return window.Tone ? Tone.context.currentTime : 0;
+  }
+
+  playAt(pitch, when, seconds, velocity = 80) {
+    if (!this.ready || !this.running) return;
+    this.sampler.triggerAttackRelease(midiToToneName(pitch), Math.max(0.05, seconds), when, velocity / 127);
+  }
+
+  // The click (metronome). A higher, louder click on the first of each group.
+  clickAt(when, accent = false) {
+    if (!this.running) return;
+    if (!this.click) {
+      this.click = new Tone.Synth({
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 },
+        volume: -6,
+      }).toDestination();
+    }
+    this.click.triggerAttackRelease(accent ? "C7" : "G6", 0.03, when, accent ? 1 : 0.6);
+  }
+
+  releaseAll() {
+    if (this.sampler && this.ready) this.sampler.releaseAll();
+  }
+
   play(pitch, seconds = 0.8, velocity = 90) {
     if (!this.ready || !this.running) return;
     this.sampler.triggerAttackRelease(midiToToneName(pitch), seconds, Tone.now(), velocity / 127);

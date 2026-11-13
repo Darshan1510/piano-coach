@@ -75,6 +75,11 @@
               <span id="home-kb-pill" class="pill pill-bad"><span class="dot"></span><span id="home-kb-pill-text">Not connected</span></span>
             </div>
             <p id="home-kb-text" class="muted">Connect the keyboard to the Mac. Then go to Setup and click "Find my keyboard".</p>
+            <!-- Live keys (real data): the keys that you press light up here. -->
+            <div class="home-live">
+              <div id="home-keyboard" class="keyboard-wrap home-mini"></div>
+              <p id="home-live-text" class="home-live-text">Press a key on your keyboard. It lights up here.</p>
+            </div>
             <button id="home-kb-btn" class="btn">Open Setup</button>
           </div>
 
@@ -102,11 +107,97 @@
               <div class="tile">
                 <div class="tile-label">Soft and loud</div>
                 <div class="tile-value" id="tile-touch">Not done</div>
-                <div class="tile-hint" id="tile-touch-hint">Setup step 4 measures it.</div>
+                <div class="tile-hint" id="tile-touch-hint">Setup step 4 checks it.</div>
               </div>
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ===================== Songs (Phase 2) ===================== -->
+      <section id="screen-songs" class="screen hidden">
+        <p class="screen-intro muted">Select a song. Start with Level 1. Each song waits for you at each key.</p>
+        <div id="song-list" class="song-list"></div>
+      </section>
+
+      <!-- ===================== Practice (opened from Songs) ===================== -->
+      <section id="screen-practice" class="screen screen-practice hidden">
+        <div class="pr-head">
+          <button id="pr-back" class="btn btn-ghost" title="Back to the song list">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Songs
+          </button>
+          <h2 id="pr-title" class="pr-title">Song</h2>
+          <span id="pr-level" class="pill pill-level">Level 1</span>
+          <span id="pr-hands-text" class="muted pr-hands-text"></span>
+        </div>
+
+        <div class="card pr-controls">
+          <div class="pr-left">
+          <div class="pr-row">
+          <div class="pr-group">
+            <div class="pr-label">How</div>
+            <div id="pr-mode" class="segmented" role="radiogroup" aria-label="How to practice">
+              <button class="seg" role="radio" data-mode="watch">Watch</button>
+              <button class="seg" role="radio" data-mode="wait">Play</button>
+            </div>
+          </div>
+          <div class="pr-group" id="pr-hands-group">
+            <div class="pr-label">Hands</div>
+            <div id="pr-hands" class="segmented" role="radiogroup" aria-label="Hands">
+              <button class="seg" role="radio" data-hands="R">Right</button>
+              <button class="seg" role="radio" data-hands="L">Left</button>
+              <button class="seg" role="radio" data-hands="RL">Both</button>
+            </div>
+          </div>
+          <div class="pr-group">
+            <label class="pr-label" for="pr-part">Part</label>
+            <select id="pr-part" class="select"></select>
+          </div>
+          <div class="pr-group pr-speed">
+            <label class="pr-label" for="pr-speed">Speed <span id="pr-speed-text" class="pr-speed-value">100%</span></label>
+            <input id="pr-speed" type="range" min="25" max="150" step="5" value="100" title="Slow is good. Go faster when it is easy.">
+          </div>
+          </div>
+          <div class="pr-switches">
+            <label class="switch"><input type="checkbox" id="pr-click"><span class="switch-track"></span> The click</label>
+            <label class="switch"><input type="checkbox" id="pr-countin" checked><span class="switch-track"></span> <span id="pr-countin-label">4 clicks before the start</span></label>
+            <label class="switch" id="pr-accompany-row"><input type="checkbox" id="pr-accompany" checked><span class="switch-track"></span> <span id="pr-accompany-label">The app plays the left hand</span></label>
+            <!-- Only when the keyboard can receive notes (setup step 5). -->
+            <label class="switch hidden" id="pr-kbsound-row"><input type="checkbox" id="pr-kbsound"><span class="switch-track"></span> Play the song on the keyboard speaker</label>
+          </div>
+          </div>
+          <div class="pr-actions">
+            <button id="pr-start" class="btn primary btn-lg pr-start">
+              <svg class="icon icon-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>
+              <svg class="icon icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+              <span id="pr-start-text">Start playing</span>
+            </button>
+            <button id="pr-restart" class="btn btn-ghost btn-sm hidden">Start again</button>
+          </div>
+        </div>
+
+        <div id="pr-banner" class="pr-banner" role="status" aria-live="polite"></div>
+
+        <div id="pr-stage" class="pr-stage">
+          <div class="pr-progress"><div id="pr-progress-fill" class="pr-progress-fill"></div></div>
+          <canvas id="pr-canvas" class="pr-canvas" role="img" aria-label="Falling notes. Each note falls to the key that you press."></canvas>
+          <div class="pr-kb">
+            <div id="pr-keyboard" class="keyboard-wrap pr-keyboard"></div>
+            <canvas id="pr-hands-canvas" class="pr-hands-canvas" aria-hidden="true"></canvas>
+          </div>
+          <div id="pr-end" class="pr-end hidden">
+            <div class="pr-end-card">
+              <h2 id="pr-end-title">Well done!</h2>
+              <p id="pr-end-text"></p>
+              <div class="btn-row">
+                <button id="pr-end-again" class="btn primary btn-lg">Play again</button>
+                <button id="pr-end-play" class="btn primary btn-lg hidden">Play it now</button>
+                <button id="pr-end-songs" class="btn btn-lg">Select another song</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p id="pr-credit" class="pr-credit muted"></p>
       </section>
 
       <!-- ===================== Free play ===================== -->
@@ -293,6 +384,7 @@
             <ul>
               <li>Piano sound: Salamander Grand Piano by Alexander Holm. License: CC BY 3.0 (<span class="mono">creativecommons.org/licenses/by/3.0</span>).</li>
               <li>Sound engine: Tone.js 15.1.22 (MIT License).</li>
+              <li>Songs: traditional melodies and Beethoven's "Ode to Joy" (public domain). The easy versions and the fingering are by Riyaz.</li>
             </ul>
           </div>
         </div>

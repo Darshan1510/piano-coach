@@ -34,6 +34,18 @@
   /* hand colors (Okabe-Ito blue and bluish green: safe for color-blind people). Phase 2 uses them. */
   --hand-right: #56b4e9;
   --hand-left: #2bb88f;
+  --hand-right-soft: rgba(86, 180, 233, 0.30);
+  --hand-left-soft: rgba(43, 184, 143, 0.30);
+  /* finger numbers on a hand color (falling notes, finger dots): contrast >= 4.5:1 (WCAG AA) */
+  --on-hand-right: #08111c;   /* 8.2:1 on #56b4e9 */
+  --on-hand-left: #08111c;    /* 7.6:1 on #2bb88f */
+  --dot-edge: #08111c;        /* outline of the finger dots (visible on white and black keys) */
+  /* falling-notes stage (canvas) */
+  --stage-bg: #0a0e16;
+  --stage-lane: rgba(255, 255, 255, 0.035);
+  --stage-grid: rgba(255, 255, 255, 0.08);
+  --stage-middle-c: rgba(245, 185, 66, 0.07);
+  --stage-band: rgba(139, 125, 255, 0.13);
   /* keyboard */
   --white-key: #f4f6fa;
   --white-key-edge: #aeb7c6;
@@ -66,6 +78,15 @@
   --bad: #c62828;  --bad-soft: rgba(198, 40, 40, 0.10);
   --hand-right: #0072b2;
   --hand-left: #009e73;
+  --hand-right-soft: rgba(0, 114, 178, 0.22);
+  --hand-left-soft: rgba(0, 158, 115, 0.22);
+  --on-hand-right: #ffffff;   /* 5.2:1 on #0072b2 */
+  --on-hand-left: #08111c;    /* 5.5:1 on #009e73 */
+  --stage-bg: #eef1f7;
+  --stage-lane: rgba(20, 30, 60, 0.045);
+  --stage-grid: rgba(20, 30, 60, 0.10);
+  --stage-middle-c: rgba(168, 100, 0, 0.07);
+  --stage-band: rgba(91, 76, 224, 0.10);
   --white-key: #ffffff;
   --white-key-edge: #b9c0ca;
   --black-key: #1f2329;
@@ -318,6 +339,7 @@ button { font: inherit; color: inherit; }
 .step-label { white-space: nowrap; }
 .stepper li:hover .step-label { color: var(--text); }
 .stepper li.active { color: var(--text); }
+.stepper li:focus-visible { outline: none; border-radius: var(--r-sm); box-shadow: var(--focus); }
 .stepper li.active .step-num { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .stepper li.done .step-num { border-color: var(--ok); background: var(--ok); color: #fff; }
 .stepper li.done .step-num::before { content: "✓"; }
@@ -386,6 +408,135 @@ button { font: inherit; color: inherit; }
 @keyframes confetti {
   0% { opacity: 1; transform: translate(0, 0) rotate(0); }
   100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); }
+}
+
+/* ---------- shared controls (Phase 2) ---------- */
+.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 0 var(--sp-3); }
+.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.pill-level { color: var(--accent-strong); background: var(--accent-soft); border-color: transparent; }
+:root[data-theme="light"] .pill-level { color: var(--accent); }
+.select {
+  min-height: 38px; padding: 0 var(--sp-3); border-radius: var(--r-md); border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+.select:focus-visible { outline: none; box-shadow: var(--focus); }
+input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.seg:disabled { opacity: 0.35; cursor: default; }
+
+/* ---------- home: live keys in the keyboard card ---------- */
+#home-kb-card { display: flex; flex-direction: column; }
+#home-kb-card .btn { align-self: flex-start; }
+.home-live { margin: var(--sp-1) 0 var(--sp-4); }
+.keyboard-wrap.home-mini { height: 92px; margin: 0 0 var(--sp-2); }
+.home-mini.kb-compact .kb-label { font-size: 10px; bottom: 4px; }
+.home-live-text { font-size: var(--fs-sm); color: var(--muted); margin: 0; }
+
+/* ---------- songs ---------- */
+.screen-intro { margin-bottom: var(--sp-5); }
+.song-level { margin-bottom: var(--sp-6); }
+.song-level-head h2 { margin-bottom: var(--sp-1); }
+.song-level-head p { margin-bottom: var(--sp-4); }
+.song-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+.song-card {
+  display: flex; flex-direction: column; gap: var(--sp-2); cursor: pointer;
+  transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+}
+.song-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.song-card-first { background: linear-gradient(135deg, var(--accent-soft), transparent 75%), var(--surface); }
+.song-card-top { display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
+.song-start { margin: 0; }
+.song-title { font-size: var(--fs-lg); margin: var(--sp-1) 0 0; }
+.song-meta { list-style: none; padding: 0; margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+.song-meta li { display: flex; align-items: center; gap: var(--sp-2); min-height: 24px; }
+.song-meta .icon { width: 16px; height: 16px; }
+.song-card .song-open { align-self: flex-start; margin-top: auto; }
+
+/* ---------- practice ---------- */
+.screen-practice {
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  height: calc(100vh - var(--topbar-h) - 2 * var(--sp-6)); min-height: 560px;
+}
+.pr-head { display: flex; align-items: center; gap: var(--sp-3); flex: none; }
+.pr-title { margin: 0; font-size: var(--fs-xl); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-hands-text { font-size: var(--fs-sm); }
+.pr-controls { flex: none; display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-3) var(--sp-4); }
+.pr-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.pr-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-3) var(--sp-5); }
+.pr-group { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.pr-label { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+.pr-controls .seg { min-width: 70px; min-height: 34px; padding: 0 var(--sp-3); }
+.pr-speed { width: 170px; }
+.pr-speed input { height: 34px; }
+.pr-speed-value { color: var(--text); margin-left: var(--sp-1); }
+.pr-switches { display: flex; flex-wrap: wrap; gap: 0 var(--sp-5); }
+.pr-switches .switch { min-height: 30px; font-size: var(--fs-sm); gap: var(--sp-2); }
+.pr-switches .switch-track { transform: scale(0.8); }
+.pr-actions { flex: none; display: flex; flex-direction: column; align-items: stretch; gap: var(--sp-1); }
+.btn-sm { min-height: 30px; font-size: var(--fs-sm); }
+.pr-start { min-width: 190px; }
+.pr-start .icon-pause, .pr-start.is-running .icon-play { display: none; }
+.pr-start.is-running .icon-pause { display: inline; }
+.pr-start .icon { fill: currentColor; stroke: none; }
+.pr-start .icon-pause { fill: none; stroke: currentColor; stroke-width: 3; }
+
+.pr-banner {
+  flex: none; min-height: 40px; display: flex; align-items: center; padding: 0 var(--sp-4);
+  border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border);
+  font-size: var(--fs-lg); font-weight: 700;
+}
+.pr-banner.go { border-color: var(--hand-right); background: var(--hand-right-soft); }
+.pr-banner.move { border-color: var(--hand-right); color: var(--text); }
+.pr-banner.move::before { content: "\2192"; margin-right: var(--sp-2); color: var(--hand-right); }
+.pr-banner.bad { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+.pr-banner.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; font-size: var(--fs-md); }
+
+.pr-stage {
+  position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column;
+  border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--border); background: var(--stage-bg);
+}
+.pr-progress { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--surface-3); z-index: 3; }
+.pr-progress-fill { height: 100%; width: 0; background: var(--accent); }
+.pr-canvas { display: block; flex: 1; min-height: 120px; width: 100%; }
+.pr-kb { position: relative; flex: none; height: 150px; background: var(--surface); }
+.keyboard-wrap.pr-keyboard { height: 100%; margin: 0; }
+/* Practice keyboard: the letters sit just below the black keys, the finger dots below the letters
+   (static/js/hands.js), so the dots do not cover the letters. */
+.pr-keyboard .kb-white .kb-label { bottom: auto; top: 64%; }
+.pr-hands-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.pr-credit { flex: none; font-size: var(--fs-xs); margin: 0; }
+
+/* keys in practice: the app plays (hand color), press now (outline), wrong (red), right (green) */
+.kb-white.play-R { background: var(--hand-right); box-shadow: 0 0 16px 2px var(--hand-right-soft); }
+.kb-white.play-L { background: var(--hand-left); box-shadow: 0 0 16px 2px var(--hand-left-soft); }
+.kb-black.play-R { background: var(--hand-right); }
+.kb-black.play-L { background: var(--hand-left); }
+/* The soft hand color goes over the white key color. Alone, it is half transparent and the dark
+   page behind the key shows through (the key looked dark blue in the dark theme). */
+.kb-key.target-R { background: linear-gradient(var(--hand-right-soft), var(--hand-right-soft)), var(--white-key); box-shadow: inset 0 0 0 3px var(--hand-right); animation: target 900ms ease-in-out infinite; }
+.kb-key.target-L { background: linear-gradient(var(--hand-left-soft), var(--hand-left-soft)), var(--white-key); box-shadow: inset 0 0 0 3px var(--hand-left); animation: target 900ms ease-in-out infinite; }
+.kb-black.target-R { background: var(--hand-right); }
+.kb-black.target-L { background: var(--hand-left); }
+.kb-key.hit, .kb-key.hit.down { transition: none; background: var(--ok); box-shadow: 0 0 18px 3px var(--ok-soft); }
+.kb-key.wrong, .kb-key.wrong.down { transition: none; background: var(--bad); box-shadow: 0 0 18px 3px var(--bad-soft); }
+.kb-key.hit .kb-label, .kb-key.wrong .kb-label { display: block; color: #fff; }
+/* letter on a key that the app plays (solid hand color): the hand's text color (contrast >= 4.5:1) */
+.kb-white.play-R .kb-label { color: var(--on-hand-right); }
+.kb-white.play-L .kb-label { color: var(--on-hand-left); }
+@keyframes target { 50% { filter: brightness(1.25); } }
+
+.pr-end {
+  position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.35); animation: screen-in var(--t-med) ease-out;
+}
+.pr-end-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: var(--sp-6) var(--sp-8); box-shadow: var(--shadow-md); max-width: 560px; text-align: center;
+}
+.pr-end-card .btn-row { justify-content: center; margin-top: var(--sp-4); }
+
+@media (max-width: 1240px) {
+  .screen-practice { height: calc(100vh - var(--topbar-h) - 2 * var(--sp-5)); }
+  .song-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ---------- reduced motion: no animation, no confetti ---------- */

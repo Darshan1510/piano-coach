@@ -82,6 +82,13 @@ def prevent_app_nap():
         options, "Riyaz listens to the MIDI keyboard")
 
 
+def pause_song_hidden():
+    """The window is hidden: pause the song (WKWebView stops drawing frames in a hidden window)."""
+    practice = app.state.riyaz.get("practice")
+    if practice is not None:
+        practice.pause(reason="hidden")
+
+
 if __name__ == "__main__":
     _activity = prevent_app_nap()  # keep a reference for the life of the app
     log.info("Riyaz at %s (data: %s)", URL, config.data_dir())
@@ -104,7 +111,8 @@ if __name__ == "__main__":
         server.should_exit = True
         thread.join(timeout=SHUTDOWN_WAIT_S)
         sys.exit(1)
-    webview.create_window("Riyaz", URL, width=1280, height=820, min_size=(1100, 680))
+    window = webview.create_window("Riyaz", URL, width=1280, height=820, min_size=(1100, 680))
+    window.events.minimized += pause_song_hidden  # the page also pauses on "visibilitychange"
     webview.start()
     # Window closed: stop the server so that shutdown code runs (MIDI ports close, Local On).
     server.should_exit = True

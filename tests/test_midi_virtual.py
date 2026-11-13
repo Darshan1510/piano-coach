@@ -221,3 +221,16 @@ def _try(fn):
         return fn()
     except Exception:
         return None
+
+
+def test_wait_mode_end_to_end_with_fake_player(live_server):
+    """Phase 2 acceptance 2 + 3 with real CoreMIDI: the fake player completes a song in wait mode;
+    a wrong key does not advance the song. (All 6 songs: `tools/fake_player.py --song all --follow`.)"""
+    from tools.fake_player import follow_wait
+
+    with FakePlayer(PORT) as fp:
+        wait_connected(live_server, PORT)
+        r = asyncio.run(follow_wait(live_server, fp, "london-bridge", ("R",), speed=1.5, wrong=2, timeout=30))
+    print("\nWAIT MODE", json.dumps(r))
+    assert r["completed"] and r["stops"] == 24 and r["hits"] == 24
+    assert r["wrong_events"] == 2 and r["wrong_reported"] == 2 and r["advanced_on_wrong"] == 0
