@@ -1,0 +1,247 @@
+{
+ "id": "scales-left-hand",
+ "title": "Scales in G and F (left hand)",
+ "credit": "Standard textbook scale fingering (public domain). Written for the Riyaz fingering test.",
+ "notes": [
+  {
+   "pitch": 43,
+   "start": 0.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 5,
+   "id": 0
+  },
+  {
+   "pitch": 45,
+   "start": 0.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 4,
+   "id": 1
+  },
+  {
+   "pitch": 47,
+   "start": 1.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 2
+  },
+  {
+   "pitch": 48,
+   "start": 1.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 3
+  },
+  {
+   "pitch": 50,
+   "start": 2.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 4
+  },
+  {
+   "pitch": 52,
+   "start": 2.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 5
+  },
+  {
+   "pitch": 54,
+   "start": 3.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 6
+  },
+  {
+   "pitch": 55,
+   "start": 3.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 7
+  },
+  {
+   "pitch": 54,
+   "start": 4.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 8
+  },
+  {
+   "pitch": 52,
+   "start": 4.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 9
+  },
+  {
+   "pitch": 50,
+   "start": 5.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 10
+  },
+  {
+   "pitch": 48,
+   "start": 5.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 11
+  },
+  {
+   "pitch": 47,
+   "start": 6.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 12
+  },
+  {
+   "pitch": 45,
+   "start": 6.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 4,
+   "id": 13
+  },
+  {
+   "pitch": 43,
+   "start": 7.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 5,
+   "id": 14
+  },
+  {
+   "pitch": 41,
+   "start": 7.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 5,
+   "id": 15
+  },
+  {
+   "pitch": 43,
+   "start": 8.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 4,
+   "id": 16
+  },
+  {
+   "pitch": 45,
+   "start": 8.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 17
+  },
+  {
+   "pitch": 46,
+   "start": 9.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 18
+  },
+  {
+   "pitch": 48,
+   "start": 9.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 19
+  },
+  {
+   "pitch": 50,
+   "start": 10.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 20
+  },
+  {
+   "pitch": 52,
+   "start": 10.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 21
+  },
+  {
+   "pitch": 53,
+   "start": 11.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 22
+  },
+  {
+   "pitch": 52,
+   "start": 11.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 23
+  },
+  {
+   "pitch": 50,
+   "start": 12.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 24
+  },
+  {
+   "pitch": 48,
+   "start": 12.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 1,
+   "id": 25
+  },
+  {
+   "pitch": 46,
+   "start": 13.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 2,
+   "id": 26
+  },
+  {
+   "pitch": 45,
+   "start": 13.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 3,
+   "id": 27
+  },
+  {
+   "pitch": 43,
+   "start": 14.0,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 4,
+   "id": 28
+  },
+  {
+   "pitch": 41,
+   "start": 14.5,
+   "dur": 0.5,
+   "hand": "L",
+   "finger": 5,
+   "id": 29
+  }
+ ]
+}

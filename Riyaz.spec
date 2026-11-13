@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for Riyaz. The Makefile calls this file (one place for the build flags).
 # Same as these flags:
-#   --onedir --windowed --add-data static:static --add-data data/songs:data/songs
+#   --onedir --windowed --add-data static:static --add-data data/songs:data/songs --add-data data/course:data/course
 #   --collect-all uvicorn fastapi starlette webview websockets mido rtmidi
 #   --hidden-import mido.backends.rtmidi --copy-metadata mido
 import os
@@ -18,7 +18,7 @@ if not os.environ.get("PYINSTALLER_CONFIG_DIR"):
 
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
-datas = [("static", "static"), ("data/songs", "data/songs")]
+datas = [("static", "static"), ("data/songs", "data/songs"), ("data/course", "data/course")]
 binaries = []
 hiddenimports = ["mido.backends.rtmidi"]
 
@@ -39,7 +39,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "tkinter"],
+    # music21 is a dev-only test oracle (DECISIONS.md, Phase 3a). It and the packages that only it
+    # needs are in .venv, and some app packages import them when they exist: keep them out.
+    excludes=["pytest", "tkinter", "music21", "numpy", "PIL", "matplotlib", "contourpy", "kiwisolver",
+              "fontTools", "cycler", "joblib", "jsonpickle", "more_itertools", "webcolors", "requests",
+              "chardet", "charset_normalizer", "urllib3", "cloudpickle", "pyparsing", "dateutil"],
     noarchive=False,
     optimize=0,
 )

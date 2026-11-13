@@ -1,0 +1,23 @@
+{
+ "about": "Song ladder (PLAN 8.3), Levels 1-3. A song is done at 100% speed with 80% or more of the keys right the first time (wait mode, the whole song, the hands in 'hands'). A level is done when all its songs are done. Each skill moment stops the song at 'at_beat' and the song goes on from 'resume_beat' (PLAN 8.2). Titles use plain words: the user sees them before the unlock.",
+ "levels": [
+  {"level": 1, "title": "First songs", "text": "Use your right hand. Your hand stays in one place most of the time.",
+   "songs": [
+    {"song_id": "mary-had-a-little-lamb", "hands": ["R"], "skills": [{"id": "five_finger", "at_beat": 0, "resume_beat": 0}, {"id": "repeat_key", "at_beat": 4, "resume_beat": 2}]},
+    {"song_id": "ode-to-joy", "hands": ["R"], "skills": [{"id": "long_note", "at_beat": 12, "resume_beat": 10}]},
+    {"song_id": "twinkle-twinkle", "hands": ["R"], "skills": [{"id": "small_move", "at_beat": 2, "resume_beat": 0}]}
+   ]},
+  {"level": 2, "title": "Play with the click", "text": "Play at a steady speed. The app can play the left hand for you.",
+   "songs": [
+    {"song_id": "au-clair-de-la-lune", "hands": ["R"], "skills": [{"id": "the_click", "at_beat": 0, "resume_beat": 0}]},
+    {"song_id": "frere-jacques", "hands": ["R"], "skills": [{"id": "pauses", "at_beat": 24, "resume_beat": 24}]},
+    {"song_id": "london-bridge", "hands": ["R"], "skills": [{"id": "steady_speed", "at_beat": 0, "resume_beat": 0}]}
+   ]},
+  {"level": 3, "title": "The left hand joins", "text": "Play with your left hand. Then play with both hands. Thin lines across the notes help you count.",
+   "songs": [
+    {"song_id": "ode-to-joy-left-hand", "hands": ["L"], "skills": [{"id": "left_fingers", "at_beat": 0, "resume_beat": 0}, {"id": "bar_lines", "at_beat": 4, "resume_beat": 2}]},
+    {"song_id": "twinkle-twinkle-left-hand", "hands": ["L"], "skills": [{"id": "interval", "at_beat": 2, "resume_beat": 0}]},
+    {"song_id": "frere-jacques-both-hands", "hands": ["R", "L"], "skills": [{"id": "both_hands", "at_beat": 0, "resume_beat": 0}]}
+   ]}
+ ]
+}

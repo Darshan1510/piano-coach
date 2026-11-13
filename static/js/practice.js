@@ -12,6 +12,8 @@ import { Keyboard, keyLayout, keyName } from "/static/js/keyboard.js";
 import { FallingNotes } from "/static/js/renderer.js";
 import { HandsView, positionAt, positionsOf } from "/static/js/hands.js";
 import { handsText } from "/static/js/songs.js";
+import { DrillPanel } from "/static/js/drill.js";
+import { esc } from "/static/js/terms.js";
 
 const $ = (id) => document.getElementById(id);
 const HAND = { R: "right hand", L: "left hand" };
@@ -21,6 +23,13 @@ const AUDIO_AHEAD_S = 0.15; // schedule Mac notes and clicks this far ahead
 const GAP_PAUSE_MS = 1000; // no frame for this long while the song runs = the window was hidden
 const MARK_MIN_MS = 250; // a red or green key stays at least this long
 const LATE_MAX_S = 0.25; // after a new anchor, a note or click this late still plays (at once)
+// Where the back button and the end card go (the screen that opened the song).
+const RETURN = {
+  songs: { back: "Songs", end: "Select another song" },
+  today: { back: "Today", end: "Back to today's practice" },
+  learn: { back: "Learn", end: "Back to the course" },
+  basics: { back: "Keyboard basics", end: "Back to the keyboard basics" },
+};
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -62,7 +71,13 @@ export function radioKeys(group) {
 }
 
 export class PracticeScreen {
-  constructor({ link, piano, api, celebrate, reducedMotion, getStatus, startSound }) {
+  constructor({ link, piano, api, celebrate, reducedMotion, getStatus, startSound, terms, getCourse, onReturn }) {
+    this.terms = terms;
+    this.getCourse = getCourse || (() => null);
+    this.onReturn = onReturn || (() => {});
+    this.returnTo = "songs";
+    this.moments = [];
+    this.skill = null; // the skill moment on the screen
     this.link = link;
     this.piano = piano;
     this.api = api;
@@ -93,6 +108,7 @@ export class PracticeScreen {
     });
     this.kb.showAllNames(true);
     this.renderer = new FallingNotes($("pr-canvas"), layout, { showBarLines: false });
+    this.skillPanel = new DrillPanel($("pr-skill-drill"), { link, api, piano, reducedMotion });
     this.hands = new HandsView($("pr-hands-canvas"), layout);
     this._bind();
     this._readColors();
@@ -107,8 +123,10 @@ export class PracticeScreen {
 
   // ------------------------------------------------------------------ open / close
 
-  async open(songId) {
+  // opts: {returnTo: "songs" | "today" | "learn" | "basics", preset: {mode, hands, section, speed}}
+  async open(songId, opts = {}) {
     const song = await this.api(`/api/songs/${encodeURIComponent(songId)}`);
+    this.returnTo = RETURN[opts.returnTo] ? opts.returnTo : "songs";
     if (this.ps && this.ps.song_id && this.ps.song_id !== song.id) {
       await this.api("/api/practice/stop", {}).catch(() => {});
     }
@@ -117,6 +135,17 @@ export class PracticeScreen {
     this.handsPresent = ["R", "L"].filter((h) => song.notes.some((n) => n.hand === h));
     this.opts.hands = this.handsPresent.includes("R") ? ["R"] : [this.handsPresent[0]];
     this.opts.section = null;
+    const pre = opts.preset || {};
+    if (pre.mode) this.opts.mode = pre.mode;
+    if (Array.isArray(pre.hands) && pre.hands.every((h) => this.handsPresent.includes(h))) this.opts.hands = pre.hands;
+    if (Number.isInteger(pre.section) && song.sections[pre.section]) this.opts.section = pre.section;
+    if (typeof pre.speed === "number") this.opts.speed = pre.speed;
+    this.opts.loop = pre.loop === false ? false : null; // daily session: a part plays one time
+    this.moments = (await this.api(`/api/course/moments/${encodeURIComponent(song.id)}`).catch(() => ({ moments: [] }))).moments;
+    this._hideSkill();
+    this.lastResult = null;
+    $("pr-back-text").textContent = RETURN[this.returnTo].back;
+    $("pr-end-songs").textContent = RETURN[this.returnTo].end;
     this.renderer.setSong(song);
     this.positions = { R: positionsOf(song, "R"), L: positionsOf(song, "L") };
     this.handNotes = {
@@ -125,14 +154,12 @@ export class PracticeScreen {
     };
     $("pr-title").textContent = song.title;
     $("pr-level").textContent = `Level ${song.level}`;
-    $("pr-hands-text").textContent = handsText(this.handsPresent);
+    $("pr-hands-text").textContent = handsText(this.handsPresent, song.source);
     $("pr-credit").textContent = song.credit || "";
     // Parts (song sections) for "Repeat a part".
     const sel = $("pr-part");
-    sel.innerHTML = "";
-    sel.appendChild(new Option("All the song", ""));
-    song.sections.forEach((s, i) => sel.appendChild(new Option(`Repeat ${s.name}`, String(i))));
-    sel.value = "";
+    this._partOptions();
+    sel.value = this.opts.section === null ? "" : String(this.opts.section);
     const clicks = song.time_signature[0];
     $("pr-countin-label").textContent = `${clicks} clicks before the start`;
     this._hideEnd();
@@ -143,8 +170,36 @@ export class PracticeScreen {
     return song;
   }
 
+  // Words that change after an unlock (PLAN 7.4): speed -> tempo, the click -> beat, bar numbers.
+  refreshWords() {
+    if (!this.terms) return;
+    $("pr-speed-word").innerHTML = this.terms.html("tempo", { capital: true });
+    $("pr-click-word").innerHTML = this.terms.unlocked("beat") ? `The click (the ${this.terms.html("beat")})` : "The click";
+    if (this.song) {
+      const v = $("pr-part").value;
+      this._partOptions();
+      $("pr-part").value = v;
+    }
+    const c = this.getCourse();
+    this.renderer.showBarLines = !!(c && c.bar_lines); // PLAN 7.4 Rule 5: from Level 3
+  }
+
+  _partOptions() {
+    const sel = $("pr-part");
+    const song = this.song;
+    sel.innerHTML = "";
+    sel.appendChild(new Option("All the song", ""));
+    const group = song.time_signature[0];
+    const bars = this.terms && this.terms.unlocked("bar");
+    song.sections.forEach((s, i) => {
+      const extra = bars ? ` (${this.terms.word("bar", { plural: true })} ${Math.floor(s.start / group) + 1} to ${Math.ceil(s.end / group)})` : "";
+      sel.appendChild(new Option(`Repeat ${s.name}${extra}`, String(i)));
+    });
+  }
+
   show() {
     this.visible = true;
+    this.refreshWords();
     this._resize();
     this._renderControls();
     this.lastFrame = null;
@@ -154,6 +209,7 @@ export class PracticeScreen {
 
   hide() {
     this.visible = false;
+    this._hideSkill();
     this._pauseHidden("left");
     this.piano.releaseAll();
   }
@@ -171,7 +227,7 @@ export class PracticeScreen {
     for (const b of document.querySelectorAll("#pr-hands .seg")) {
       b.addEventListener("click", () => this._setOpt("hands", b.dataset.hands.split("")));
     }
-    $("pr-part").addEventListener("change", (e) => this._setOpt("section", e.target.value === "" ? null : Number(e.target.value)));
+    $("pr-part").addEventListener("change", (e) => { this.opts.loop = null; this._setOpt("section", e.target.value === "" ? null : Number(e.target.value)); });
     $("pr-countin").addEventListener("change", (e) => { this._setOpt("countIn", e.target.checked); this._saveOptions(); });
     $("pr-accompany").addEventListener("change", (e) => this._setOpt("accompany", e.target.checked));
     $("pr-kbsound").addEventListener("change", (e) => this._setOpt("kbSound", e.target.checked));
@@ -193,6 +249,14 @@ export class PracticeScreen {
     $("pr-restart").addEventListener("click", () => this.start());
     $("pr-end-again").addEventListener("click", () => this.start());
     $("pr-end-play").addEventListener("click", async () => { await this._setOpt("mode", "wait"); this.start(); });
+    $("pr-back").addEventListener("click", () => this.onReturn(this.returnTo));
+    $("pr-end-songs").addEventListener("click", () => this.onReturn(this.returnTo));
+    $("pr-skill-demo").addEventListener("click", () => this._skillDemo());
+    $("pr-skill-try").addEventListener("click", () => this._skillTry());
+    $("pr-skill-go").addEventListener("click", () => this._skillContinue(true));
+    $("pr-skill-skip").addEventListener("click", () => this._skillContinue(false));
+    this.link.on("practice_skill", (e) => { if (this._ours(e)) this._showSkill(e.skill, e.beat); });
+    this.link.on("course", (e) => { if (e.event === "run" && this.song && e.song_id === this.song.id) this._onResult(e); });
     for (const group of document.querySelectorAll("#pr-mode, #pr-hands")) radioKeys(group);
 
     this.link.on("practice", (s) => this._onState(s));
@@ -292,10 +356,22 @@ export class PracticeScreen {
     }
     this._hideEnd();
     const o = this.opts;
+    // Skill moments (PLAN 8.2): only in Play mode, for the hands that the user plays.
+    const [rs, re] = this._range();
+    const moments = o.mode === "wait"
+      ? this.moments.filter((m) => !m.done && m.hands.every((h) => o.hands.includes(h)) && m.at_beat < re - 1e-6
+        && m.at_beat >= rs - 1e-6) : [];
+    const first = moments.find((m) => m.at_beat <= rs + 1e-6);
+    if (first) { // the new skill is at the start: teach it before the song starts
+      this._showSkill(first.id, first.at_beat, true);
+      return;
+    }
     try {
       const s = await this.api("/api/practice/start", {
         song_id: this.song.id, mode: o.mode, hands: o.hands, speed: o.speed, section: o.section,
         count_in: o.countIn, accompany: o.accompany, output: o.kbSound ? "keyboard" : "mac",
+        breaks: moments.map((m) => ({ beat: m.at_beat, skill: m.id })),
+        ...(o.loop === false && o.section !== null ? { loop: false } : {}),
       });
       this._onState(s); // a new run: _onState sets the sound schedule from its anchor
     } catch (err) {
@@ -349,8 +425,12 @@ export class PracticeScreen {
     const wait = e.mode === "wait";
     $("pr-end-title").textContent = wait ? "Well done! You played the whole song." : "This is the end of the song.";
     $("pr-end-text").textContent = wait
-      ? (e.wrong === 0 ? "You pressed no wrong keys." : `Wrong keys: ${e.wrong}. Play it again to make it better.`)
+      ? (e.accuracy !== undefined
+        ? `You pressed ${Math.round(e.accuracy)}% of the keys right the first time. Wrong keys: ${e.wrong}.`
+        : (e.wrong === 0 ? "You pressed no wrong keys." : `Wrong keys: ${e.wrong}. Play it again to make it better.`))
       : "Now play it yourself. The song waits for you at each key.";
+    $("pr-end-goal").textContent = "";
+    $("pr-end-goal").className = "pr-end-goal";
     $("pr-end-again").classList.toggle("hidden", !wait);
     $("pr-end-play").classList.toggle("hidden", wait);
     $("pr-end").classList.remove("hidden");
@@ -358,6 +438,113 @@ export class PracticeScreen {
     const btn = wait ? $("pr-end-again") : $("pr-end-play");
     btn.focus({ preventScroll: true }); // keyboard users: the focus goes to the card
     if (wait) this.celebrate($("pr-end-title"));
+  }
+
+  // The course result for this run (event "course"): is the song done, and what is still needed?
+  _onResult(r) {
+    this.lastResult = r;
+    const el = $("pr-end-goal");
+    let text = "";
+    let kind = "";
+    if (r.newly_done) { text = "This song is done! It is marked in the course."; kind = "ok"; }
+    else if (r.done) { text = "This song is done."; kind = "ok"; }
+    else if (r.ladder) {
+      const need = [];
+      if (!r.full) need.push("play the whole song");
+      if ((r.speed || 0) < r.rule.speed / 100 - 1e-6) need.push(`play at ${r.rule.speed}% speed`);
+      if (!(r.required_hands || []).every((h) => (r.hands || []).includes(h))) {
+        need.push(r.required_hands.length > 1 ? "play with both hands" : r.required_hands[0] === "L" ? "play with the left hand" : "play with the right hand");
+      }
+      if ((r.accuracy || 0) < r.rule.score) need.push(`press ${r.rule.score}% of the keys right the first time`);
+      if (need.length) text = `To finish this song: ${need.join(", ")}.`;
+    }
+    el.textContent = text;
+    el.className = `pr-end-goal ${kind}`;
+    if (r.newly_done) this.celebrate($("pr-end-title"));
+  }
+
+  // ------------------------------------------------------------------ skill moments (PLAN 8.2)
+
+  _showSkill(skillId, atBeat, beforeStart = false) {
+    const m = this.moments.find((x) => x.id === skillId);
+    if (!m) return;
+    const sk = m.skill;
+    this.skill = { m, atBeat, beforeStart, passed: false };
+    $("pr-skill-name").textContent = `New: ${sk.name}`;
+    $("pr-skill-text").innerHTML = sk.text.map((t) => `<p>${this.terms ? this.terms.markup(t) : esc(t)}</p>`).join("");
+    const pitches = sk.demo.notes.map((n) => n.pitch);
+    const beats = [...new Set(sk.demo.notes.map((n) => n.start))].sort((a, b) => a - b);
+    $("pr-skill").classList.remove("hidden");
+    this.skillPanel.setup({ pitches, positions: sk.demo.hand_positions, stepBeats: beats });
+    this._skillButtons("demo");
+    this.piano.releaseAll();
+  }
+
+  _skillButtons(stage) {
+    $("pr-skill-demo").classList.toggle("primary", stage === "demo");
+    $("pr-skill-try").classList.toggle("primary", stage === "try");
+    $("pr-skill-try").classList.toggle("hidden", stage === "done");
+    $("pr-skill-demo").classList.toggle("hidden", stage === "done");
+    $("pr-skill-go").classList.toggle("hidden", stage !== "done");
+    $("pr-skill-skip").classList.toggle("hidden", stage === "done");
+    $("pr-skill-go").textContent = this.skill && this.skill.beforeStart ? "Start the song" : "Continue the song";
+    const focus = stage === "done" ? $("pr-skill-go") : stage === "try" ? $("pr-skill-try") : $("pr-skill-demo");
+    focus.focus({ preventScroll: true });
+  }
+
+  async _skillDemo() {
+    if (!this.skill) return;
+    this.skillPanel.stop();
+    await this.skillPanel.demo(this.skill.m.skill.demo);
+    if (this.skill && !this.skill.passed) this._skillButtons("try");
+  }
+
+  async _skillTry() {
+    if (!this.skill) return;
+    this.skillPanel.stopDemo();
+    const id = this.skill.m.id;
+    $("pr-skill-try").textContent = "Start again";
+    try {
+      await this.skillPanel.start({ source: "skill", ref: id }, {
+        onPass: async (st) => {
+          if (!this.skill || this.skill.m.id !== id) return;
+          this.skill.passed = true;
+          this.skill.m.done = true;
+          this.celebrate($("pr-skill-name"));
+          this._skillButtons("done");
+          const unlocked = (st.result && st.result.unlocked) || [];
+          if (unlocked.length && this.terms) {
+            await this.terms.load();
+            this.refreshWords();
+            await this.terms.firstUse(unlocked);
+          }
+        },
+      });
+    } catch (err) {
+      this._say(err.message, 4000);
+    }
+  }
+
+  async _skillContinue(passed) {
+    const sk = this.skill;
+    if (!sk) return;
+    this.skillPanel.stop();
+    this.skillPanel.stopDemo();
+    if (!passed) sk.m.done = true; // "Skip": no stop for this skill in this visit (it stays not done)
+    this._hideSkill();
+    if (sk.beforeStart || !this.ps || !this.ps.paused) return this.start();
+    try {
+      this._onState(await this.api("/api/practice/seek", { beat: sk.m.resume_beat, run: this.ps.run }));
+    } catch (err) {
+      this._say(err.message, 4000);
+    }
+  }
+
+  _hideSkill() {
+    this.skill = null;
+    $("pr-skill").classList.add("hidden");
+    $("pr-skill-try").textContent = "Try it 3 times";
+    if (this.skillPanel) { this.skillPanel.stop(); this.skillPanel.stopDemo(); }
   }
 
   _hideEnd() {
@@ -597,7 +784,9 @@ export class PracticeScreen {
       text = "Connect your keyboard to play. You can select Watch to listen to the song.";
       kind = "warn";
     } else if (ps && ps.paused) {
-      text = ps.pause_reason === "hidden"
+      text = ps.pause_reason === "skill"
+        ? "The song stopped for a new skill."
+        : ps.pause_reason === "hidden"
         ? "The song stopped because the window was not in front. Click Continue."
         : ps.pause_reason === "left"
           ? "The song stopped because you went to a different page. Click Continue."
@@ -645,7 +834,7 @@ export class PracticeScreen {
       bg: cssVar("--stage-bg"), lane: cssVar("--stage-lane"), grid: cssVar("--stage-grid"),
       middleC: cssVar("--stage-middle-c"), line: cssVar("--accent"), bad: cssVar("--bad"),
       text: cssVar("--text"), band: cssVar("--stage-band"), bandEdge: cssVar("--accent"),
-      waitRing: cssVar("--text"),
+      waitRing: cssVar("--text"), barLine: cssVar("--stage-bar"),
     };
     this.renderer.setColors(this.colors);
   }

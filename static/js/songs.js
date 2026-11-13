@@ -4,10 +4,12 @@
 const LEVELS = {
   1: { title: "Level 1: First songs", text: "Use your right hand. Your hand stays in one place most of the time." },
   2: { title: "Level 2: Play with the click", text: "Play at a steady speed. The app can play the left hand for you." },
+  3: { title: "Level 3: The left hand joins", text: "Play with your left hand. Then play with both hands." },
 };
 
-export function handsText(hands) {
+export function handsText(hands, source = "builtin") {
   if (hands.length === 1) return hands[0] === "R" ? "Right hand" : "Left hand";
+  if (source !== "builtin") return "Right hand and left hand";
   return "Right hand. The app can play the left hand.";
 }
 
@@ -19,13 +21,16 @@ export function lengthText(seconds) {
 
 const ICON_HAND = '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v7a6 6 0 0 1-6 6h-.5a6 6 0 0 1-5-2.7L3.3 13a1.5 1.5 0 0 1 2.4-1.8L8 14"/>';
 const ICON_TIME = '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>';
+const ICON_OK = '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>';
+const ICON_NEED = '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/>';
 const ICON_NOTES = '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>';
 
 export class SongsScreen {
-  constructor(el, { api, onOpen }) {
+  constructor(el, { api, onOpen, onImport }) {
     this.el = el;
     this.api = api;
     this.onOpen = onOpen;
+    this.onImport = onImport;
     this.songs = [];
   }
 
@@ -46,7 +51,9 @@ export class SongsScreen {
       el.innerHTML = '<div class="card"><p class="muted">The app cannot find songs. Start the app again.</p></div>';
       return;
     }
-    const levels = [...new Set(this.songs.map((s) => s.level))].sort((a, b) => a - b);
+    const builtin = this.songs.filter((s) => s.source === "builtin" || !s.source);
+    const mine = this.songs.filter((s) => s.source && s.source !== "builtin");
+    const levels = [...new Set(builtin.map((s) => s.level))].sort((a, b) => a - b);
     let first = true;
     for (const level of levels) {
       const info = LEVELS[level] || { title: `Level ${level}`, text: "" };
@@ -56,36 +63,70 @@ export class SongsScreen {
       group.querySelector("h2").textContent = info.title;
       group.querySelector("p").textContent = info.text;
       const grid = group.querySelector(".song-grid");
-      for (const s of this.songs.filter((x) => x.level === level)) {
+      for (const s of builtin.filter((x) => x.level === level)) {
         grid.appendChild(this._card(s, first));
         first = false;
       }
       el.appendChild(group);
     }
+    // The user's imported songs (Phase 3a): one group, with the difficulty text on each card.
+    const group = document.createElement("section");
+    group.className = "song-level song-level-mine";
+    group.innerHTML = `<div class="song-level-head"><h2>Your songs</h2><p class="muted"></p></div><div class="song-grid"></div>`;
+    group.querySelector("p").textContent = mine.length
+      ? "Songs that you imported. Each card tells you what the song needs."
+      : "Import a MIDI file of a song that you like. The app adds it here.";
+    const grid = group.querySelector(".song-grid");
+    for (const s of mine) grid.appendChild(this._card(s, false));
+    if (!mine.length) {
+      const empty = document.createElement("article");
+      empty.className = "card song-empty";
+      empty.innerHTML = '<p class="muted">You have no imported songs.</p><button class="btn song-import-empty">Import a song</button>';
+      empty.querySelector("button").addEventListener("click", () => this.onImport && this.onImport());
+      grid.appendChild(empty);
+    }
+    el.appendChild(group);
   }
 
   _card(s, first) {
-    const card = document.createElement("article");
-    card.className = `card song-card${first ? " song-card-first" : ""}`;
-    card.dataset.song = s.id;
-    card.innerHTML = `
-      <div class="song-card-top">
-        <span class="pill pill-level">Level ${s.level}</span>
-        ${first ? '<span class="card-eyebrow song-start">Start here</span>' : ""}
-      </div>
-      <h3 class="song-title"></h3>
-      <ul class="song-meta">
-        <li><svg class="icon" viewBox="0 0 24 24">${ICON_HAND}</svg><span class="m-hands"></span></li>
-        <li><svg class="icon" viewBox="0 0 24 24">${ICON_TIME}</svg><span class="m-time"></span></li>
-        <li><svg class="icon" viewBox="0 0 24 24">${ICON_NOTES}</svg><span class="m-notes"></span></li>
-      </ul>
-      <button class="btn ${first ? "primary" : ""} song-open">Practice</button>`;
-    card.querySelector(".song-title").textContent = s.title;
-    card.querySelector(".m-hands").textContent = handsText(s.hands);
-    card.querySelector(".m-time").textContent = lengthText(s.seconds);
-    const mine = s.notes_by_hand ? s.notes_by_hand[s.hands.includes("R") ? "R" : s.hands[0]] : s.note_count;
-    card.querySelector(".m-notes").textContent = `${mine} notes to play`;
-    card.addEventListener("click", () => this.onOpen(s.id));
-    return card;
+    return songCard(s, first, () => this.onOpen(s.id));
   }
+}
+
+// One song card. Imported songs show the difficulty text (PLAN 8.4) and "Your song".
+export function songCard(s, first, onOpen) {
+  const card = document.createElement("article");
+  card.className = `card song-card${first ? " song-card-first" : ""}`;
+  card.dataset.song = s.id;
+  card.innerHTML = `
+    <div class="song-card-top">
+      <span class="pill pill-level">Level ${s.level}</span>
+      ${first ? '<span class="card-eyebrow song-start">Start here</span>' : ""}
+    </div>
+    <h3 class="song-title"></h3>
+    <ul class="song-meta">
+      <li><svg class="icon" viewBox="0 0 24 24">${ICON_HAND}</svg><span class="m-hands"></span></li>
+      <li><svg class="icon" viewBox="0 0 24 24">${ICON_TIME}</svg><span class="m-time"></span></li>
+      <li><svg class="icon" viewBox="0 0 24 24">${ICON_NOTES}</svg><span class="m-notes"></span></li>
+    </ul>
+    <button class="btn ${first ? "primary" : ""} song-open">Practice</button>`;
+  card.querySelector(".song-title").textContent = s.title;
+  card.querySelector(".m-hands").textContent = handsText(s.hands, s.source);
+  card.querySelector(".m-time").textContent = lengthText(s.seconds);
+  const imported = s.source && s.source !== "builtin";
+  const mine = imported ? s.note_count
+    : (s.notes_by_hand ? s.notes_by_hand[s.hands.includes("R") ? "R" : s.hands[0]] : s.note_count);
+  card.querySelector(".m-notes").textContent = `${mine} notes to play`;
+  if (imported) {
+    card.querySelector(".song-card-top").insertAdjacentHTML("beforeend", '<span class="pill pill-quiet pill-mine">Your song</span>');
+    if (s.difficulty) {
+      const need = document.createElement("p");
+      need.className = `song-need${s.difficulty.playable ? " ok" : ""}`;
+      need.innerHTML = `<svg class="icon" viewBox="0 0 24 24">${s.difficulty.playable ? ICON_OK : ICON_NEED}</svg><span></span>`;
+      need.querySelector("span").textContent = s.difficulty.text;
+      card.querySelector(".song-meta").after(need);
+    }
+  }
+  card.addEventListener("click", onOpen);
+  return card;
 }

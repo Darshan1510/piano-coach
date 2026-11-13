@@ -206,7 +206,8 @@ def test_watch_keyboard_output_all_notes(env):
 
 
 @pytest.mark.parametrize("sid", ["mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle",
-                                 "au-clair-de-la-lune", "frere-jacques", "london-bridge"])
+                                 "au-clair-de-la-lune", "frere-jacques", "london-bridge",
+                                 "ode-to-joy-left-hand", "twinkle-twinkle-left-hand", "frere-jacques-both-hands"])
 def test_builtin_song_completes_in_wait_mode(env, sid):
     """A fake player that presses each expected key when the song waits completes each song."""
     p, clk, events = env

@@ -16,3 +16,14 @@
 - Remember the practice options (speed, the click, count-in) per song.
 - Ode to Joy part B (needs the low G: a hand move), as a Level 3 or 4 version.
 - A short "Got it" card the first time a hand move or a spread hand appears (skill moments are Phase 3).
+- Tempo map in the song format (imported songs with tempo changes play at one speed now).
+- Delete or rename an imported song from the Songs screen (only "import again" replaces it now).
+- Import screen: a small piano-roll preview of each track before the import.
+- Import: drag a MIDI file onto the window.
+- Hot-plug: a port that closes and opens again with the same name within 2 s is not seen again (found with 2 fake-player runs one after the other). Check with a real USB cable.
+- Course: a "Start the course again" button (reset course progress, keep the songs and settings).
+- Skill moments: check the timing of the tries with the click (Phase 4 timing data), not only the keys.
+- Today: pause the block timer when the window is hidden.
+- Words page: play the demo inside the card on the page (now it opens the card).
+- Bar lines: an option to show them before Level 3.
+- Practice time: also count watch mode (listening) as practice time.

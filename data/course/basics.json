@@ -1,0 +1,56 @@
+{
+ "about": "Keyboard basics (PLAN 8.1): 3 short steps on the real keyboard. Each task has a check (drill). All texts are Level 1 texts (PLAN 7.4 Rule 6).",
+ "level": 1,
+ "steps": [
+  {"id": "b1", "title": "Find your way",
+   "text": ["The black keys come in groups of 2 and 3.", "The white key just left of each group of 2 black keys is C.", "Keys on the left sound lower. Keys on the right sound higher."],
+   "tasks": [
+    {"id": "b1-every-c", "text": "Press every C on your keyboard. Your keyboard has 6 Cs. Each C is just left of a group of 2 black keys.",
+     "drill": {"kind": "collect", "pitches": [36, 48, 60, 72, 84, 96]}},
+    {"id": "b1-middle-c", "text": "Press middle C. Middle C is the C near the middle of the keyboard, just left of the 2 black keys in the middle.",
+     "drill": {"kind": "steps", "steps": [{"any": [60]}]}},
+    {"id": "b1-group-3", "text": "Press a black key in a group of 3 black keys.",
+     "drill": {"kind": "steps", "steps": [{"any": [42, 44, 46, 54, 56, 58, 66, 68, 70, 78, 80, 82, 90, 92, 94]}]}}
+   ]},
+  {"id": "b2", "title": "Fingers and hand shape",
+   "text": ["Your thumb is finger 1. Your little finger is finger 5. This is the same on both hands.", "Curve your fingers a little, as if you hold a ball. Keep your wrist loose.", "Sit in front of the middle of the keyboard."],
+   "tasks": [
+    {"id": "b2-thumb", "text": "Put your right thumb on [[middle_c]]. Press [[middle_c]] with finger 1.",
+     "hand": {"hand": "R", "start": 0, "thumb_pitch": 60},
+     "drill": {"kind": "steps", "steps": [{"any": [60], "finger": 1, "hand": "R"}]}},
+    {"id": "b2-right", "text": "Keep your right hand on [[middle_c]]. Put one finger on each white key. Look at the [[finger_number]] below. Press the key under that finger.",
+     "hand": {"hand": "R", "start": 0, "thumb_pitch": 60}, "show": "finger",
+     "drill": {"kind": "steps", "steps": [{"any": [64], "finger": 3, "hand": "R"}, {"any": [60], "finger": 1, "hand": "R"}, {"any": [67], "finger": 5, "hand": "R"}, {"any": [62], "finger": 2, "hand": "R"}, {"any": [65], "finger": 4, "hand": "R"}]}},
+    {"id": "b2-left", "text": "Now use your left hand. Put your left little finger on the C left of [[middle_c]]. Put one finger on each white key. Press the key under each [[finger_number]].",
+     "hand": {"hand": "L", "start": 0, "thumb_pitch": 55}, "show": "finger",
+     "drill": {"kind": "steps", "steps": [{"any": [53], "finger": 2, "hand": "L"}, {"any": [50], "finger": 4, "hand": "L"}, {"any": [55], "finger": 1, "hand": "L"}, {"any": [48], "finger": 5, "hand": "L"}, {"any": [52], "finger": 3, "hand": "L"}]}}
+   ]},
+  {"id": "b3", "title": "Read the screen",
+   "text": ["A note falls down to the line above the keys. When the note touches the line, press its key.", "A long note means: hold the key down until the note goes past the line.", "Blue notes are for the right hand. Green notes are for the left hand."],
+   "tasks": [
+    {"id": "b3-demo", "text": "Play 10 notes with your right hand. The song waits for you at each key. Press each key when its note touches the line.",
+     "practice": "basics-demo"},
+    {"id": "b3-soft-loud", "text": "Press a key gently 2 times, for a soft sound. Then press a key hard 2 times, for a loud sound.",
+     "drill": {"kind": "steps", "steps": [{"any": null, "vel": "soft"}, {"any": null, "vel": "soft"}, {"any": null, "vel": "loud"}, {"any": null, "vel": "loud"}]}}
+   ]}
+ ],
+ "demo_song": {
+  "id": "basics-demo", "title": "Keyboard basics: falling notes", "source": "course", "bpm": 80,
+  "time_signature": [4, 4], "key": "C major", "level": 1, "order": 0,
+  "credit": "Exercise by Riyaz.",
+  "notes": [
+   {"id": 0, "pitch": 60, "start": 0, "dur": 1, "hand": "R", "finger": 1},
+   {"id": 1, "pitch": 62, "start": 1, "dur": 1, "hand": "R", "finger": 2},
+   {"id": 2, "pitch": 64, "start": 2, "dur": 1, "hand": "R", "finger": 3},
+   {"id": 3, "pitch": 65, "start": 3, "dur": 1, "hand": "R", "finger": 4},
+   {"id": 4, "pitch": 67, "start": 4, "dur": 1, "hand": "R", "finger": 5},
+   {"id": 5, "pitch": 67, "start": 5, "dur": 2, "hand": "R", "finger": 5},
+   {"id": 6, "pitch": 65, "start": 7, "dur": 1, "hand": "R", "finger": 4},
+   {"id": 7, "pitch": 64, "start": 8, "dur": 1, "hand": "R", "finger": 3},
+   {"id": 8, "pitch": 62, "start": 9, "dur": 1, "hand": "R", "finger": 2},
+   {"id": 9, "pitch": 60, "start": 10, "dur": 2, "hand": "R", "finger": 1}
+  ],
+  "sections": [{"name": "Part 1", "start": 0, "end": 12}],
+  "hand_positions": [{"hand": "R", "start": 0, "thumb_pitch": 60}]
+ }
+}

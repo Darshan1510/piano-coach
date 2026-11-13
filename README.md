@@ -5,8 +5,14 @@ Riyaz is Hindi/Urdu for "daily practice".
 
 Phase 1: MIDI connection, setup and calibration, a live 61-key keyboard on the screen with note
 names and chord names, and a Mac piano sound.
-Phase 2 (this version): 6 built-in songs (Levels 1-2), falling notes with finger numbers and a hand
+Phase 2: 6 built-in songs (Levels 1-2), falling notes with finger numbers and a hand
 outline, Watch and Play (wait) modes, hands, speed, the click, count-in and "Repeat a part".
+Phase 3a: MIDI file import (Songs → "Import a song") with track choice, hand split,
+automatic fingering, chords, key and a difficulty check on each imported song card.
+Phase 3b (this version): Today (a daily session: warm-up, song, review, "Find the key", with a
+timer and an end summary), Learn (keyboard basics and the song ladder, Levels 1-3, with skill
+moments inside the songs), Words (the music words that you learned), streak with a weekly
+streak freeze, daily goal, practice calendar and an optional Mac reminder (Settings).
 See `PLAN.md` and `PROGRESS.md`.
 
 ## Install (release build)
@@ -73,6 +79,26 @@ RIYAZ_EXTRA_SONG_DIR=.cache/test-songs uv run main.py   # show test songs in the
 ```
 
 Songs are JSON files in `data/songs/` (format: `PLAN.md` 5.1; `start` and `dur` in beats).
+Imported songs: `~/Library/Application Support/Riyaz/songs/<id>.json` with the original `<id>.mid`.
+
+```sh
+uv run tools/fake_player.py --song imported --hands RL --follow http://127.0.0.1:8020   # wait mode, imported songs
+uv run tools/fingering_report.py            # automatic fingering vs the built-in songs
+uv run tools/make_test_midi.py              # make the test MIDI files in tests/data/midi/
+```
+
+Course and daily session (the app must run):
+
+```sh
+uv run tools/fake_player.py --basics  http://127.0.0.1:8020            # do the keyboard basics
+uv run tools/fake_player.py --session http://127.0.0.1:8020 --minutes 10   # a whole daily session
+uv run tools/fake_player.py --autoplay http://127.0.0.1:8020 --until 600   # play what the window asks for
+```
+
+Progress (sessions, song results, course, words, practice time) is in
+`~/Library/Application Support/Riyaz/riyaz.sqlite3`.
+
+`music21` is in the dev group only (test oracle). It is never in `Riyaz.app`.
 
 ## Build
 

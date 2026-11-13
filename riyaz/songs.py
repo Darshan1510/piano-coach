@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +122,8 @@ def validate(raw: Any) -> Song:
         if not isinstance(p, dict) or p.get("hand") not in HANDS:
             raise SongError(f"hand position {i}: hand must be R or L")
         thumb = p.get("thumb_pitch")
-        if not isinstance(thumb, int) or not config.KEY_LOW <= thumb <= config.KEY_HIGH:
+        # A hand at the end of the keyboard can have fingers past the last key (imported songs).
+        if not isinstance(thumb, int) or not config.KEY_LOW - 12 <= thumb <= config.KEY_HIGH + 12:
             raise SongError(f"hand position {i}: thumb_pitch is not on the keyboard")
         pos = {"hand": p["hand"], "start": _num(p.get("start"), f"hand position {i} start"), "thumb_pitch": thumb}
         keys = p.get("keys")
@@ -151,14 +153,20 @@ def validate(raw: Any) -> Song:
     song["order"] = order if isinstance(order, int) else 99
     if isinstance(raw.get("credit"), str):
         song["credit"] = raw["credit"]
+    # Imported songs (Phase 3a): the difficulty check and the import facts.
+    for name in ("difficulty", "import"):
+        if isinstance(raw.get(name), dict):
+            song[name] = raw[name]
     return song
 
 
 def song_dirs() -> list[Path]:
+    """Built-in songs first (an imported song cannot replace a built-in song), then the others."""
     dirs = [config.songs_path()]
     extra = config.extra_song_dir()
     if extra is not None:
         dirs.append(extra)
+    dirs.append(config.user_songs_path())
     return dirs
 
 
@@ -170,8 +178,42 @@ def load_file(path: Path) -> Song:
     return validate(raw)
 
 
+_cache_lock = threading.Lock()
+_cache: dict = {"sig": None, "songs": {}}
+
+
+def _signature() -> tuple:
+    """The song files (folder, name, change time, size). A new, changed or removed file changes it."""
+    out = []
+    for folder in song_dirs():
+        files = []
+        if folder.is_dir():
+            for path in sorted(folder.glob("*.json")):
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                files.append((path.name, st.st_mtime_ns, st.st_size))
+        out.append((str(folder), tuple(files)))
+    return tuple(out)
+
+
+def invalidate() -> None:
+    """Read the song files again at the next load_all() (after an import or a save)."""
+    with _cache_lock:
+        _cache["sig"] = None
+
+
 def load_all() -> dict[str, Song]:
-    """All songs by id. A bad file is skipped (and logged)."""
+    """All songs by id. A bad file is skipped (and logged).
+
+    The songs are cached until a song file changes (or invalidate()). The dict is a new dict, but
+    the songs in it are shared: do not change them.
+    """
+    sig = _signature()
+    with _cache_lock:
+        if _cache["sig"] == sig:
+            return dict(_cache["songs"])
     songs: dict[str, Song] = {}
     for folder in song_dirs():
         if not folder.is_dir():
@@ -183,7 +225,9 @@ def load_all() -> dict[str, Song]:
                 log.warning("Song file skipped: %s", exc)
                 continue
             songs.setdefault(song["id"], song)
-    return songs
+    with _cache_lock:
+        _cache["sig"], _cache["songs"] = sig, songs
+    return dict(songs)
 
 
 def get(song_id: str) -> Song | None:
@@ -195,16 +239,22 @@ def hands_of(song: Song) -> list[str]:
     return [h for h in HANDS if h in present]
 
 
-def summary(song: Song) -> dict:
-    """The data for one song card."""
-    return {
+def summary(song: Song, user_level: int = config.USER_LEVEL_DEFAULT) -> dict:
+    """The data for one song card. Imported songs also get the difficulty card text (PLAN 8.4)."""
+    out = {
         "id": song["id"], "title": song["title"], "level": song["level"], "bpm": song["bpm"],
         "hands": hands_of(song), "beats": song["end"],
         "seconds": round(song["end"] * 60.0 / song["bpm"]), "note_count": len(song["notes"]),
         "notes_by_hand": {h: sum(1 for n in song["notes"] if n["hand"] == h) for h in hands_of(song)},
-        "sections": song["sections"], "order": song["order"],
+        "sections": song["sections"], "order": song["order"], "source": song["source"],
     }
+    if isinstance(song.get("difficulty"), dict):
+        from .difficulty import card_text
+
+        out["difficulty"] = {**card_text(song["difficulty"], user_level), "skills": song["difficulty"].get("skills", [])}
+    return out
 
 
-def list_summaries() -> list[dict]:
-    return sorted((summary(s) for s in load_all().values()), key=lambda s: (s["level"], s["order"], s["title"]))
+def list_summaries(user_level: int = config.USER_LEVEL_DEFAULT) -> list[dict]:
+    return sorted((summary(s, user_level) for s in load_all().values()),
+                  key=lambda s: (s["source"] != "builtin", s["level"], s["order"], s["title"]))

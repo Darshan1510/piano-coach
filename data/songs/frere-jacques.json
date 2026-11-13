@@ -44,7 +44,7 @@
   {"id": 32, "pitch": 48, "start": 24.0, "dur": 4.0, "hand": "L", "finger": 1, "vel": 64},
   {"id": 33, "pitch": 60, "start": 24.0, "dur": 1.0, "hand": "R", "finger": 4, "vel": 80},
   {"id": 34, "pitch": 55, "start": 25.0, "dur": 1.0, "hand": "R", "finger": 1, "vel": 80},
-  {"id": 35, "pitch": 60, "start": 26.0, "dur": 2.0, "hand": "R", "finger": 4, "vel": 80},
+  {"id": 35, "pitch": 60, "start": 26.0, "dur": 1.0, "hand": "R", "finger": 4, "vel": 80},
   {"id": 36, "pitch": 48, "start": 28.0, "dur": 4.0, "hand": "L", "finger": 1, "vel": 64},
   {"id": 37, "pitch": 60, "start": 28.0, "dur": 1.0, "hand": "R", "finger": 4, "vel": 80},
   {"id": 38, "pitch": 55, "start": 29.0, "dur": 1.0, "hand": "R", "finger": 1, "vel": 80},

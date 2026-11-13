@@ -1,10 +1,16 @@
-// Riyaz UI: app shell (sidebar + top bar), home, songs, practice, free play, setup, settings.
+// Riyaz UI: app shell (sidebar + top bar), home, today (daily session), learn (course), songs,
+// words, practice, keyboard basics, free play, setup, settings.
 
 import { Link } from "/static/js/ws.js";
 import { Piano } from "/static/js/audio.js";
 import { Keyboard, MIDDLE_C, WORDS, shortKeyName } from "/static/js/keyboard.js";
 import { SongsScreen } from "/static/js/songs.js";
 import { PracticeScreen, radioKeys } from "/static/js/practice.js";
+import { ImportScreen } from "/static/js/importer.js";
+import { Modal, Terms } from "/static/js/terms.js";
+import { LearnScreen, WordsScreen } from "/static/js/course.js";
+import { BasicsScreen } from "/static/js/basics.js";
+import { TodayScreen } from "/static/js/today.js";
 
 const $ = (id) => document.getElementById(id);
 const link = new Link();
@@ -20,6 +26,9 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const ICONS = {
   home: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+  today: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M9 15l2 2 4-4"/>',
+  learn: '<path d="M4 20h4v-5h4v-5h4V5h4"/><path d="M4 20V16"/>',
+  words: '<path d="M5 4h10a4 4 0 0 1 4 4v12H9a4 4 0 0 1-4-4z"/><path d="M5 16a4 4 0 0 1 4-4h10"/>',
   songs: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
   play: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v7M12 6v7M17 6v7"/>',
   setup: '<path d="M9 7V3M15 7V3"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
@@ -29,7 +38,10 @@ const ICONS = {
 
 const NAV = [
   { id: "home", label: "Home", icon: "home" },
+  { id: "today", label: "Today", icon: "today" },
+  { id: "learn", label: "Learn", icon: "learn" },
   { id: "songs", label: "Songs", icon: "songs" },
+  { id: "words", label: "Words", icon: "words" },
   { id: "play", label: "Free play", icon: "play" },
   { id: "setup", label: "Setup", icon: "setup" },
   { id: "settings", label: "Settings", icon: "settings", group: "bottom" },
@@ -50,11 +62,18 @@ function buildNav() {
 buildNav();
 
 // Screens that are not in the sidebar: the sidebar item that stays active, and the page title.
-const SUB_SCREENS = { practice: { nav: "songs", title: "Practice" } };
+const SUB_SCREENS = {
+  practice: { nav: "songs", title: "Practice" }, import: { nav: "songs", title: "Import a song" },
+  basics: { nav: "learn", title: "Keyboard basics" },
+};
+const RETURN_NAV = { songs: "songs", today: "today", learn: "learn", basics: "learn" };
 
 let current = null;
 function show(screen) {
   if (current === "practice" && screen !== "practice") practice.hide();
+  if (current === "basics" && screen !== "basics") basics.hide();
+  if (current === "today" && screen !== "today") today.hide();
+  if (screen === "practice") SUB_SCREENS.practice.nav = RETURN_NAV[practice.returnTo] || "songs";
   current = screen;
   for (const el of document.querySelectorAll(".screen")) el.classList.add("hidden");
   $(`screen-${screen}`).classList.remove("hidden");
@@ -62,8 +81,16 @@ function show(screen) {
   for (const b of document.querySelectorAll(".nav-item")) b.classList.toggle("active", b.dataset.screen === navId);
   $("page-title").textContent = SUB_SCREENS[screen]?.title || NAV.find((n) => n.id === screen)?.label || "";
   if (screen === "about") updateDelayText();
+  if (screen === "settings") loadHabitSettings();
   if (screen === "songs") songsScreen.load();
   if (screen === "practice") practice.show();
+  if (screen === "import") importScreen.show();
+  if (screen === "today") today.show();
+  if (screen === "learn") learn.load();
+  if (screen === "words") terms.load().then(() => words.render());
+  if (screen === "basics") basics.show();
+  renderSessionPill();
+  $("content").scrollTop = 0;
 }
 
 // FastAPI sends a string, or a list of {loc, msg} (422: bad request body). Show plain text.
@@ -144,23 +171,138 @@ function celebrate(anchor) {
 
 // ------------------------------------------------------------------ songs and practice (Phase 2)
 
+const modal = new Modal();
+const terms = new Terms({ api, modal, piano });
+let course = null; // course state (/api/course): level, basics, bar lines
+
 const practice = new PracticeScreen({
   link, piano, api, celebrate, reducedMotion, getStatus: () => status, startSound,
+  terms, getCourse: () => course, onReturn: (to) => show(to || "songs"),
 });
-const songsScreen = new SongsScreen($("song-list"), {
-  api,
-  onOpen: async (id) => {
-    try {
-      await practice.open(id);
-      show("practice");
-    } catch (err) {
-      console.error(err);
-    }
-  },
-});
-$("pr-back").addEventListener("click", () => show("songs"));
-$("pr-end-songs").addEventListener("click", () => show("songs"));
+async function openSong(id, opts = {}) {
+  try {
+    await practice.open(id, opts);
+    show("practice");
+  } catch (err) {
+    console.error(err);
+  }
+}
+const songsScreen = new SongsScreen($("song-list"), { api, onOpen: openSong, onImport: () => show("import") });
+const importScreen = new ImportScreen({ api, onOpen: openSong });
+$("songs-import").addEventListener("click", () => show("import"));
+$("im-back").addEventListener("click", () => show("songs"));
+new Set([...document.querySelectorAll("#im-grid")]).forEach(radioKeys);
 window.riyaz.practice = practice; // for checks (frame rate) in the web inspector
+window.riyaz.importScreen = importScreen;
+window.riyaz.show = show;
+
+// ------------------------------------------------------------------ course, daily session, habit (Phase 3b)
+
+const learn = new LearnScreen($("learn-body"), {
+  api, terms, modal, onOpenSong: openSong, onBasics: () => show("basics"),
+});
+const words = new WordsScreen($("words-body"), { terms, onBasics: () => show("basics") });
+const basics = new BasicsScreen({
+  link, api, piano, terms, reducedMotion, celebrate,
+  onPractice: (id) => openSong(id, { returnTo: "basics", preset: { mode: "wait", hands: ["R"], speed: 1 } }),
+  onDone: () => { loadCourse(); celebrate($("basics-done")); },
+});
+$("basics-to-today").addEventListener("click", () => show("today"));
+let sessionText = null;
+const today = new TodayScreen({
+  link, api, piano, terms, reducedMotion, celebrate, openSong, showScreen: show,
+  onHabit: (h) => renderHabit(h),
+  onTick: (text) => { sessionText = text; renderSessionPill(); },
+});
+window.riyaz.today = today;
+window.riyaz.learn = learn;
+window.riyaz.basics = basics;
+window.riyaz.terms = terms;
+window.riyaz.modal = modal;
+
+async function loadCourse() {
+  try {
+    course = await api("/api/course");
+  } catch { return course; }
+  today.setCourse(course);
+  practice.refreshWords();
+  renderHome();
+  return course;
+}
+
+function renderSessionPill() {
+  const show_ = !!sessionText && current !== "today";
+  $("session-pill").classList.toggle("hidden", !show_);
+  if (show_) $("session-pill-text").textContent = `Today: ${sessionText}`;
+}
+$("session-pill").addEventListener("click", () => show("today"));
+
+let habit = null;
+function renderHabit(h) {
+  habit = h;
+  const n = h.streak.days;
+  $("streak-text").textContent = `${n} day${n === 1 ? "" : "s"}`;
+  $("streak-pill").classList.toggle("lit", n > 0);
+  $("streak-pill").title = h.streak.freeze_left
+    ? "Days in a row with practice. You have 1 free day this week."
+    : "Days in a row with practice. You used the free day of this week.";
+  $("minutes-text").textContent = `${Math.floor(h.today_minutes)} min today`;
+  $("minutes-pill").classList.toggle("met", h.today_minutes >= h.goal_minutes);
+  $("minutes-pill").title = `Practice time today. Your daily goal is ${h.goal_minutes} minutes.`;
+  renderHome();
+}
+async function refreshHabit() {
+  try { renderHabit(await api("/api/habit")); } catch { /* the next refresh shows it */ }
+}
+setInterval(refreshHabit, 30000);
+
+// Course events (riyaz/server.py): a song run was saved. A level is done: celebrate.
+link.on("course", async (e) => {
+  if (e.event !== "run") return;
+  const before = course ? course.level : null;
+  await loadCourse();
+  refreshHabit();
+  if (e.unlocked && e.unlocked.length) { await terms.load(); await terms.firstUse(e.unlocked); }
+  if (e.level_up && before !== null) {
+    celebrate($("page-title"));
+    const next = e.level <= course.max_level ? `Now start Level ${e.level}.` : "You finished all levels in this version.";
+    await modal.show({ eyebrow: "Level done", title: `Level ${e.level_before} is done!`, tone: "party",
+      html: `<p>You finished all the songs of Level ${e.level_before}. ${next}</p>`,
+      buttons: [{ id: "ok", label: "Great", primary: true }] });
+  }
+});
+
+// ------------------------------------------------------------------ settings: daily practice
+
+async function loadHabitSettings() {
+  const st = await api("/api/settings/habit").catch(() => null);
+  if (!st) return;
+  for (const b of document.querySelectorAll("#set-length .seg")) b.setAttribute("aria-checked", String(Number(b.dataset.min) === st.session_minutes));
+  $("set-goal").value = String(st.goal_minutes);
+  $("set-notify").checked = st.notify;
+  $("set-notify-time").value = st.notify_time;
+  const sel = $("set-song");
+  const list = await api("/api/songs").catch(() => ({ songs: [] }));
+  sel.innerHTML = "";
+  sel.appendChild(new Option("The next song of the course", ""));
+  for (const s of list.songs) sel.appendChild(new Option(s.source === "builtin" ? s.title : `${s.title} (your song)`, s.id));
+  sel.value = st.song_id || "";
+}
+async function saveHabit(body) {
+  await api("/api/settings/habit", body).catch(() => {});
+  loadHabitSettings();
+  refreshHabit();
+}
+for (const b of document.querySelectorAll("#set-length .seg")) b.addEventListener("click", () => saveHabit({ session_minutes: Number(b.dataset.min) }));
+$("set-goal").addEventListener("change", (e) => saveHabit({ goal_minutes: Number(e.target.value) }));
+$("set-song").addEventListener("change", (e) => saveHabit({ song_id: e.target.value || null }));
+$("set-notify").addEventListener("change", (e) => saveHabit({ notify: e.target.checked }));
+$("set-notify-time").addEventListener("change", (e) => saveHabit({ notify_time: e.target.value }));
+$("set-notify-test").addEventListener("click", async () => {
+  const r = await api("/api/habit/notify-test", {}).catch(() => ({ ok: false }));
+  $("set-notify-test").textContent = r.ok ? "Reminder sent" : "The Mac did not show it";
+});
+for (const g of ["#set-length", "#today-length"]) radioKeys(document.querySelector(g));
 
 // ------------------------------------------------------------------ status (top bar, home, sidebar)
 
@@ -191,12 +333,23 @@ function renderHome() {
   const calibrated = !!c.calibrated;
 
   // Start card: one primary action.
-  $("start-eyebrow").textContent = calibrated ? "Ready" : "Start here";
-  $("start-title").textContent = calibrated ? "Learn your first song" : "Set up your keyboard";
+  const mins = habit ? habit.session_minutes : 20;
+  const basicsDone = !!(course && course.basics.done);
+  $("start-eyebrow").textContent = calibrated ? (habit && habit.streak.today_done ? "Good work today" : "Ready") : "Start here";
+  $("start-title").textContent = calibrated ? "Start today's practice" : "Set up your keyboard";
   $("start-text").textContent = calibrated
-    ? "Start with \"Mary Had a Little Lamb\". The notes fall onto the keys. The song waits for you at each key."
+    ? (basicsDone
+      ? `About ${mins} minutes: a warm-up, your song, a review and a key game.`
+      : `About ${mins} minutes. First time? Start with the keyboard basics: find the keys, the finger numbers and the falling notes.`)
     : "Do the 5 setup steps one time. Then the app knows your keyboard.";
-  $("start-btn").textContent = calibrated ? "Open the songs" : "Start the setup";
+  $("start-btn").textContent = calibrated ? "Start today's practice" : "Start the setup";
+  $("home-progress").classList.toggle("hidden", !calibrated);
+  if (habit) {
+    const n = habit.streak.days;
+    $("hp-streak").textContent = `${n} day${n === 1 ? "" : "s"}`;
+    $("hp-today").textContent = `${Math.floor(habit.today_minutes)} of ${habit.goal_minutes} min`;
+  }
+  if (course) $("hp-level").textContent = course.all_done ? "All levels done" : `Level ${course.level}`;
 
   // Keyboard card
   $("home-kb-pill").className = `pill ${status.connected ? "pill-ok" : "pill-bad"}`;
@@ -252,7 +405,7 @@ function renderHome() {
 }
 
 $("start-btn").addEventListener("click", () => {
-  if (status.calibration && status.calibration.calibrated) show("songs");
+  if (status.calibration && status.calibration.calibrated) show("today");
   else { show("setup"); goStep("connect"); }
 });
 $("home-kb-btn").addEventListener("click", () => {
@@ -561,6 +714,10 @@ setInterval(() => { if (current === "about") updateDelayText(); }, 1000);
 
 goStep("connect");
 renderHome();
+terms.onChange(() => { practice.refreshWords(); kb.refreshLabels(); });
+terms.load();
+loadCourse();
+refreshHabit();
 api("/api/state").then((s) => {
   renderStatus(s);
   // Home shows the next action. If the setup is not done, the Start card points to it.

@@ -2,8 +2,97 @@
 
 ## Status
 
-- **Stage:** Phase 2 review fixes (2026-11-13). Phase 2 not committed (the user reviews, then commits). Before: Phase 1, commit 748bc96.
-- **Next:** manual checks below (real keyboard, sound, window in front), then Phase 3.
+- **Stage:** Phase 3 review fixes (2026-11-13), on top of Phase 3a + 3b. Not committed (the user reviews, then commits). Before: Phase 2, commit e8482d7.
+- **Next:** Phase 4 (play-along, scoring, error analysis, nudges, spaced repetition).
+
+## Phase 3 review fixes (2026-11-13)
+
+Details and reasons: `DECISIONS.md` "Phase 3 review fixes".
+
+- 3a: consistent time signature / bar when the beat falls back (6/8 fast -> 3/4); note limit on the selected tracks + raw limit on every note_on; stable tempo sort (later event wins); `user_level` selects the fingering mode; program change from a conductor track; "Off / Large steps / Small steps" timing words; normal-mode fingering tuned + a black-key test set.
+- 3b: run results saved on a worker thread (not under the practice lock), song list cached; strict term marks with plain words for any locked term; "bar" plain = "group of clicks"; left-hand G text fixed + position-text test; old open sessions closed, session time only for its day and after its start; block timer from server time, paused while hidden; basics tasks keyboard-usable; modal focus trap and focus return; `PRAGMA user_version`.
+
+Results: `uv run pytest` **246 passed** (239 in 19 s + `tests/test_midi_virtual.py` 7 alone in 36 s; 24 new tests). `make build-mac` OK, 42 MB.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Import 3 PD MIDI files + wait mode (fake player) | **Pass** | Source app, new data folder: Bach (165 notes), La Native (172), Les Graces one track (228); `fake_player --song imported --hands RL --follow --wrong 2 --speed 1.5`: 3/3 PASS (106 / 103 / 114 stops, 2 wrong each, 0 advanced). |
+| Fingering report | **Pass** | Beginner: built-in 313/350 = 89.4%, black-key set 129/144 = 89.6% (those passages use normal mode). Normal: built-in 293/350 = **83.7%** (was 69.7%), black-key set 129/144 = 89.6%, together 422/494 = 85.4%. Per song (normal): Mary 100, Ode 100, Twinkle 95.2, Au Clair 55.0, Frère Jacques 82.5, London Bridge 90.6, Ode LH 100, Twinkle LH 73.8, Frère both 85.4; Ode in D 100, scales LH 80, scales RH 80, triads 100. `test_normal_mode_matches_hand_written_fingering` (>= 70%). |
+| Daily session end to end (fake player) | **Pass** | Source app: `fake_player --session --minutes 10 --wrong 2`: 4/4 parts, streak 1, session time 47.2 s, wall 47.4 s. Frozen `Riyaz.app --server`: 4/4 parts, 46.9 s / 47.0 s; foreign Origin POST `/api/course/skip` and `/api/session/1/end` 403. |
+| WKWebView check | **Pass** | Today: timer goes on after a reload (1:56 left after 3.8 s), stays paused while hidden, server gets `paused`; Import: "Off / Large steps 1/8 / Small steps 1/16"; term card: Tab and Shift+Tab wrap, Escape returns the focus to "Show me"; basics tasks `role=button`, Enter selects and keeps the focus; no `[[` marks on the page; no JS errors. Screenshots: the scratchpad folder (`p3fix/shots/`). |
+
+### Open issues (Phase 3 review fixes)
+
+- Normal-mode fingering: Au Clair de la Lune 55% (no memory of the song's hand position); some scale starts/ends differ from the textbook (no "start or end on the thumb" rule).
+- "Part" also names the 4 parts of the daily session ("Part 1 of 4", "Skip this part"), as well as the song parts. Not changed in this fix (one word, one meaning: check with the user).
+- The check window gets no animation frames (not in front, `document.hidden` true), so the running timer was checked with a page-side stand-in for "visible". Check by hand.
+- 3/8 (or similar) at a very high speed is clamped to 300 beats a minute (plays slower than the file).
+
+## Phase 3b (2026-11-13): course and daily practice
+
+Details and reasons: `DECISIONS.md` "Phase 3b".
+
+- Content `data/course/`: `terms.json` (13 terms, PLAN 7.4 table), `basics.json` (B1-B3, 8 tasks + 10-note demo), `skills.json` (11 skill moments), `ladder.json` (Levels 1-3). New songs: Ode to Joy (left hand), Twinkle (left hand), Frère Jacques (both hands). Level 2 Frère Jacques has one pause now.
+- Backend: `riyaz/course.py` (content, level, song done rule, skill moments, terms, skip forward), `riyaz/drill.py` (key checks), `riyaz/session.py` (daily plan, sessions, practice time, streak + freeze, calendar, reminder), `riyaz/db.py` (7 new tables). `practice.py`: skill-moment breaks, `seek`, `loop: false`, `practice_end` + accuracy/clean_stops/section/errors. Server: `/api/course*`, `/api/drill*`, `/api/today`, `/api/habit`, `/api/session/*`, `/api/settings/habit`, `/api/habit/notify-test`, `/api/practice/seek` (all POST with the Origin check, all routes with the Host check). New events `drill`, `drill_hit`, `drill_wrong`, `practice_skill`, `course` (old events unchanged).
+- UI: NAV Today, Learn, Words; screens Today (plan, block timer, Next/Skip, summary, streak, goal, calendar), Learn (basics card, levels, skip with warning), Words (cards, Show me, basics again), Keyboard basics (3 steps); skill-moment overlay on Practice (New: …, Show me with the hand outline, Try it 3 times, Continue the song); term cards ("Got it", dotted underline); bar lines with numbers from Level 3; Home "Start today's practice"; top bar streak flame, real minutes, session pill; Settings "Daily practice" (length, goal, song, reminder). `static/js/terms.js`, `drill.js`, `course.js`, `basics.js`, `today.js`.
+- `tools/fake_player.py`: `--basics URL`, `--session URL [--minutes N --wrong N]`, `--autoplay URL --until S` (plays each drill step and wait-mode stop that the app asks for).
+
+### Phase 3b acceptance (2026-11-13)
+
+`uv run pytest`: **222 passed** (215 in 19 s + `tests/test_midi_virtual.py` 7 alone in 39 s; 30 new tests in `tests/test_course.py`; the 3 Level 3 songs added to the song, practice and fingering tests). `make build-mac`: OK, **42 MB**, `data/course` (4 files) and 9 songs in the bundle.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Daily session start to end with the fake player (PLAN Phase 3 acceptance 3) | **Pass** | Source app (port 8123, new data folder, real CoreMIDI port): `fake_player.py --session --minutes 10`: warm-up drill (Ode, 0 wrong) → song (Ode whole song at 100%, accuracy 100%, skill moment "Hold a long note" stopped the song at beat 11.5, 3 tries incl. a 1 s hold, song went on from beat 10, song done) → review (Mary Part 2, played once) → Find the key (10 keys); end summary: new skill "Hold a long note", best 100%, streak 1, 4/4 parts, 48 s. Frozen `Riyaz.app --server` (new data folder): same run with `--wrong 2`: 4/4 parts, 2 wrong keys reported, "Stay where your hand sits" + "Press the same key again" (repeat_key stopped Mary at beat 3.5, resumed at 2), "hand position" unlocked, Mary done, streak 1, 47 s. pytest `test_daily_session_end_to_end_with_fake_keys`. |
+| 2. Keyboard basics and a skill moment; term unlocks; card once | **Pass** | `fake_player.py --basics` (CoreMIDI): all 8 tasks (every C, middle C, group of 3, finger 1, right/left finger numbers, 10-note wait demo, soft/loud) → `basics_done: true`, unlocked middle C, finger number. pytest: `test_basics_unlock_terms_and_card_shows_once` (unlocked, `seen` false → POST seen → true; locked terms send no term text), `test_skill_moment_in_a_song_unlocks_its_term`, `test_practice_break_and_seek`. UI: first-use card queue (`terms.firstUse`) shows only unseen cards. |
+| 3. Level 1 → 2 → 3, bar lines only from Level 3, streak/freeze | **Pass** | `test_level_1_to_2_to_3_and_bar_lines_only_at_level_3` (server path: 75% / 80% speed not done, 85% done; level ups 1→2→3→4; Frère both hands with one hand not done; `bar_lines` false at 1-2, true at 3; imported cards use the course level). Window: Ode to Joy (left hand) at Level 3 shows bar lines with the bar number. Streak/freeze/calendar with fake dates: `test_streak_counts_days_in_a_row`, `test_streak_freeze_one_day_each_week` (one freeze per week, 2 missed days break, yesterday covered while today is open), `test_calendar_heat_map`; reminder with a fake clock: `test_reminder_once_a_day_after_the_time_and_below_the_goal`. |
+| 4. Tests, build, frozen app | **Pass** | 222 passed. Build 42 MB. Frozen app: session start + full session with fake notes (row 1); foreign Origin POST `/api/session/start` 403. |
+| 5. Screenshots (WKWebView, dark + light) | **Done** | 33 images: Home, Today (plan, warm-up block, song block, Find the key, summary, session pill on Home), skill moment, Words + card, Learn (+ Level 3), basics (B1, B2), Settings, Level 3 bar lines. No JS errors, no horizontal scroll at 1280 px. Fixed after the first look: the active block was below the fold (now at the top, plan = 4-part strip); the summary tiles wrapped ("Less than 1 minute" → "Less than 1 min", smaller values); the skill card hid its buttons and keyboard (buttons above the keyboard, smaller padding). the scratchpad folder (`phase3b/`) |
+| Rule 6 (locked words) | **Pass** | `test_rule_6_course_texts_use_no_locked_term` (all course texts by level), `test_level_titles_use_plain_words`, STE sentence length ≤ 25 words; the Phase 2 locked-word test now scans the 5 new UI scripts, renderer/keyboard and the new error classes. |
+| Phase 3a regression | **Pass** | Import La Native (172 notes, card text from the course level) + `fake_player --song imported --hands RL --follow --wrong 2`: PASS (103 stops, 2 wrong, 0 advanced). `fingering_report.py`: beginner 313/350 = 89.4% (9 songs; the 6 old songs unchanged), normal 69.7%. |
+
+### Open issues (Phase 3b)
+
+- Not tested with the real YPT-320 or by a person: skill-moment tries, soft/loud split, hold and pause checks, the reminder notification (osascript was not run in the checks; it is unit-tested with a fake notifier).
+- "Song done" uses the wait-mode accuracy (Phase 4 replaces it with the play-along score). Speed above 100% also counts.
+- Practice time counts only key presses (gaps < 60 s): watching and reading longer texts do not count.
+- ~~The block timer runs on wall time, also when the window is hidden.~~ Fixed (review fixes).
+- The Words "Show me" opens the card first (the demo is in the card).
+- Hot-plug: fake-player runs one after the other still need a short pause (Phase 3a note).
+
+## Phase 3a (2026-11-13): MIDI import pipeline
+
+Details and reasons: `DECISIONS.md` "Phase 3a".
+
+- `riyaz/importers/midi_import.py`: read with mido (tempo map merged, ticks to beats), track list (note count, instrument, drums), default = piano tracks, drums never default, 1/8 and 1/16 grid, song parts (long pause or every 4 bars), clean-up rules, limits (2 MB, 20000 notes, 30 minutes), clear error texts. Saves `<data dir>/songs/<id>.json` + the original `<id>.mid`.
+- `riyaz/handsplit.py` (2 parts + swap; DP split for 1 part), `riyaz/fingering.py` (beginner mode + Parncutt normal mode, hand positions), `riyaz/difficulty.py` (measures, skills, level, card text), `theory.py` (chords per bar, key).
+- Server: `POST /api/import/midi`, `POST /api/import/midi/{token}/song` (Origin + Host checks); `GET /api/songs` adds imported songs with the card text.
+- UI: "Import a song" on the Songs screen, Import screen (file, tracks with hand and note count, swap, timing grid, name), "Your songs" group with the difficulty text; imported songs open in Practice.
+- Tools: `tools/make_test_midi.py`, `tools/fingering_report.py`, `fake_player.py --song ID|imported|FILE.json`.
+- music21 in the uv dev group (test oracle only); `Riyaz.spec` excludes it and its packages.
+
+### Phase 3a acceptance (2026-11-13)
+
+`uv run pytest`: **183 passed** (38 s; 59 new). `make build-mac`: OK, **42 MB** (no music21, numpy, Pillow in the app).
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Import 3 public-domain MIDI files, play each in wait mode (fake player) | **Pass** | Source app (`main.py --server`, port 8123): `POST /api/import/midi` for Bach BWV Anh. 120 (2 tracks, 165 notes), La Native (2 tracks, 172), Les Graces one track (1 track both hands, DP split, 228). `fake_player.py --song imported --hands RL --follow … --wrong 2 --speed 1.5`: 3/3 PASS (106 / 103 / 114 stops, 2 wrong keys each, 0 advanced on a wrong key; 43 / 22 / 29 s). Also `--song my-la-native-f2ad24 --hands R` PASS and `--song <json path> --hands L` PASS. Backend: every test file completes wait mode for R, L, both (`test_every_test_file_imports_and_completes_wait_mode`). |
+| 2. Fingering test ≥ 70% | **Pass: 93.0%** (214/230) | Beginner mode (Levels 1-3): Mary 26/26 100%, Ode to Joy 30/30 100%, Twinkle 42/42 100%, Au Clair 54/60 90.0%, Frère Jacques 33/40 82.5%, London Bridge 29/32 90.6%. Normal mode (for information): 158/230 68.7%. `tools/fingering_report.py`, `test_fingering_matches_hand_written_fingering`. |
+| 3. Tests, build, frozen app | **Pass** | 183 passed. `make build-mac` 42 MB; `find dist/Riyaz.app -iname '*music21*'` empty, no numpy/PIL. Frozen `Riyaz.app --server`: POST import of La Native OK (172 notes, card text), foreign Origin 403, bad file 400 with text; fake player wait mode both hands PASS (103 stops, 1 wrong key, 0 advanced). |
+| 4. Screenshots (WKWebView, dark + light) | **Done** | Songs "Your songs" cards with difficulty text, Import step 1, tracks, swapped hands, one track, done card, error text, Practice with an imported song. No JS errors, no horizontal scroll at 1280 px. Fixed after the first look: the timing buttons box was as wide as the column; the page now scrolls to step 2 and to the done card. the scratchpad folder (`phase3a/`) |
+| music21 cross-checks | **Pass** | Chord root/quality for 144 chords; key = music21 Krumhansl-Kessler on 8 files, = music21 default key on the 3 PD files; note starts in quarter notes = music21 on the 3 PD files. |
+| Hand split (DP) vs real tracks | **Pass** | Bach 99.4%, La Native 100%, Les Graces 95.2% (test needs ≥ 90%). |
+| Bad files | **Pass** | Empty, not MIDI, header only, cut file, garbage, zero timing division, 300 randomly damaged files: an error text or a correct song, no crash. |
+
+### Open issues (Phase 3a)
+
+- Imported songs play at one speed (tempo changes are counted, not played).
+- ~~Normal-mode fingering only checked by rules (68.7%).~~ Review fixes: 83.7% on built-in songs, 89.6% on a black-key set with textbook fingering.
+- Chord names come from all notes of a bar: a melody with few notes can get no name or a wrong name.
+- No way to delete an imported song in the app yet (IDEAS.md). Remove the files in `~/Library/Application Support/Riyaz/songs/`.
+- Fake-player runs one after the other within about 2 s: the app did not see the new port with the same name (hot-plug). A 5-second pause fixed it. Check with the real cable (IDEAS.md).
+- The real file picker (`<input type="file">` in the pywebview window) is not clicked by the check script (it uploads a `File` object from JS). Test it by hand.
 
 ## Phase 2 review fixes (2026-11-13)
 

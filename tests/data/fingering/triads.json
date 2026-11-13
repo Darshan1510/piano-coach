@@ -1,0 +1,319 @@
+{
+ "id": "triads",
+ "title": "Triads with black keys (both hands)",
+ "credit": "Root-position triads, standard fingering 1 3 5 (right) and 5 3 1 (left).",
+ "notes": [
+  {
+   "pitch": 60,
+   "start": 0.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 0
+  },
+  {
+   "pitch": 64,
+   "start": 0.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 1
+  },
+  {
+   "pitch": 67,
+   "start": 0.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 2
+  },
+  {
+   "pitch": 62,
+   "start": 1.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 3
+  },
+  {
+   "pitch": 66,
+   "start": 1.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 4
+  },
+  {
+   "pitch": 69,
+   "start": 1.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 5
+  },
+  {
+   "pitch": 67,
+   "start": 2.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 6
+  },
+  {
+   "pitch": 71,
+   "start": 2.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 7
+  },
+  {
+   "pitch": 74,
+   "start": 2.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 8
+  },
+  {
+   "pitch": 69,
+   "start": 3.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 9
+  },
+  {
+   "pitch": 73,
+   "start": 3.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 10
+  },
+  {
+   "pitch": 76,
+   "start": 3.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 11
+  },
+  {
+   "pitch": 65,
+   "start": 4.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 12
+  },
+  {
+   "pitch": 69,
+   "start": 4.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 13
+  },
+  {
+   "pitch": 72,
+   "start": 4.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 14
+  },
+  {
+   "pitch": 70,
+   "start": 5.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 15
+  },
+  {
+   "pitch": 74,
+   "start": 5.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 16
+  },
+  {
+   "pitch": 77,
+   "start": 5.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 17
+  },
+  {
+   "pitch": 60,
+   "start": 6.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 1,
+   "id": 18
+  },
+  {
+   "pitch": 64,
+   "start": 6.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 3,
+   "id": 19
+  },
+  {
+   "pitch": 67,
+   "start": 6.0,
+   "dur": 1.0,
+   "hand": "R",
+   "finger": 5,
+   "id": 20
+  },
+  {
+   "pitch": 48,
+   "start": 7.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 21
+  },
+  {
+   "pitch": 52,
+   "start": 7.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 22
+  },
+  {
+   "pitch": 55,
+   "start": 7.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 23
+  },
+  {
+   "pitch": 50,
+   "start": 8.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 24
+  },
+  {
+   "pitch": 54,
+   "start": 8.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 25
+  },
+  {
+   "pitch": 57,
+   "start": 8.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 26
+  },
+  {
+   "pitch": 43,
+   "start": 9.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 27
+  },
+  {
+   "pitch": 47,
+   "start": 9.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 28
+  },
+  {
+   "pitch": 50,
+   "start": 9.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 29
+  },
+  {
+   "pitch": 45,
+   "start": 10.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 30
+  },
+  {
+   "pitch": 49,
+   "start": 10.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 31
+  },
+  {
+   "pitch": 52,
+   "start": 10.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 32
+  },
+  {
+   "pitch": 41,
+   "start": 11.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 33
+  },
+  {
+   "pitch": 45,
+   "start": 11.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 34
+  },
+  {
+   "pitch": 48,
+   "start": 11.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 35
+  },
+  {
+   "pitch": 48,
+   "start": 12.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 5,
+   "id": 36
+  },
+  {
+   "pitch": 52,
+   "start": 12.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 3,
+   "id": 37
+  },
+  {
+   "pitch": 55,
+   "start": 12.0,
+   "dur": 1.0,
+   "hand": "L",
+   "finger": 1,
+   "id": 38
+  }
+ ]
+}

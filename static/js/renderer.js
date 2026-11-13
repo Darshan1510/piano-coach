@@ -5,7 +5,7 @@
 // Per frame: binary search for the first visible note, then draw only the visible notes.
 // The lanes are drawn once into an off-screen canvas (after a resize or a theme change).
 //
-// PLAN 7.4 Rule 5: no bar lines before Level 3. Phase 2 songs are Level 1-2: showBarLines is false.
+// PLAN 7.4 Rule 5: no bar lines before Level 3. practice.js sets showBarLines from the course level.
 
 import { roundRect } from "/static/js/hands.js";
 
@@ -134,10 +134,21 @@ export class FallingNotes {
       }
     }
 
+    // From Level 3 (Rule 5): a thin line where each bar starts, with a small bar number.
     if (this.showBarLines) {
-      ctx.fillStyle = colors.grid;
       const g = this.beatsPerGroup;
-      for (let b = Math.ceil(beat / g) * g; b < beat + LOOKAHEAD; b += g) ctx.fillRect(0, yOf(b), w, 1);
+      ctx.font = `700 11px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      for (let b = Math.max(0, Math.ceil(beat / g) * g); b < beat + LOOKAHEAD; b += g) {
+        const y = Math.round(yOf(b));
+        ctx.fillStyle = colors.barLine || colors.grid;
+        ctx.fillRect(0, y, w, 1);
+        ctx.fillStyle = colors.text;
+        ctx.globalAlpha = 0.7;
+        ctx.fillText(String(Math.floor(b / g) + 1), 6, y - 2);
+        ctx.globalAlpha = 1;
+      }
     }
 
     // Notes

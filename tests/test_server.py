@@ -146,7 +146,9 @@ def test_practice_post_needs_own_origin(client):
 # PLAN 7.4: words that a Level 1-3 user has not learned yet. "s?" also finds the plural.
 LOCKED = re.compile(r"\b(sharp|flat|major|minor|scale|interval|progression|bar|measure|beat|tempo|chord|"
                     r"rest)s?\b", re.I)
-UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js")
+UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js",
+            "/static/js/importer.js", "/static/js/terms.js", "/static/js/drill.js", "/static/js/course.js",
+            "/static/js/basics.js", "/static/js/today.js", "/static/js/renderer.js", "/static/js/keyboard.js")
 
 
 def shown_strings(src: str) -> list[str]:
@@ -179,7 +181,8 @@ def test_practice_text_has_no_locked_words(client):
         for text in shown_strings(client.get(js).text):
             assert not LOCKED.search(text), (js, text)
     for sid in ("mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle", "au-clair-de-la-lune",
-                "frere-jacques", "london-bridge"):
+                "frere-jacques", "london-bridge", "ode-to-joy-left-hand", "twinkle-twinkle-left-hand",
+                "frere-jacques-both-hands", "basics-demo"):
         song = client.get(f"/api/songs/{sid}").json()
         text = " ".join([song["title"]] + [s["name"] for s in song["sections"]])
         assert not LOCKED.search(text), (sid, text)
@@ -189,18 +192,26 @@ def test_practice_text_has_no_locked_words(client):
 
 
 def backend_user_messages() -> list[str]:
-    """Texts in PracticeError(...) and HTTPException(...) calls in riyaz/ (the UI shows them)."""
+    """Texts for the user in riyaz/ (all folders): PracticeError(...), HTTPException(...),
+    MidiImportError(...), CourseError, DrillError and SessionError calls (the UI shows them).
+    An f-string counts with its fixed parts."""
     import ast
     from pathlib import Path
 
     out = []
-    for path in (Path(__file__).resolve().parent.parent / "riyaz").glob("*.py"):
+    for path in (Path(__file__).resolve().parent.parent / "riyaz").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("PracticeError", "HTTPException"):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) in (
+                    "PracticeError", "HTTPException", "MidiImportError", "CourseError", "DrillError",
+                    "SessionError"):
                 for arg in node.args:
                     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                         out.append(arg.value)
-    assert len(out) >= 8
+                    elif isinstance(arg, ast.JoinedStr):
+                        out.append("".join(v.value if isinstance(v, ast.Constant) else "N" for v in arg.values))
+                    elif isinstance(arg, ast.BinOp):  # "a " "b" split over lines is one Constant; a + b is not used
+                        pass
+    assert len(out) >= 25
     return out
 
 
@@ -211,3 +222,86 @@ def test_locked_word_check_finds_words():
     for word in ("bars", "Beat", "tempo", "F sharp", "flats", "minor", "scales", "rest"):
         assert LOCKED.search(word), word
     assert not LOCKED.search("sidebar rested barn")
+
+
+# ---------------------------------------------------------------------------- MIDI import (Phase 3a)
+
+from pathlib import Path  # noqa: E402
+
+MIDI_DIR = Path(__file__).resolve().parent / "data" / "midi"
+
+
+def test_import_midi_flow(client):
+    data = (MIDI_DIR / "la-native.mid").read_bytes()
+    r = client.post("/api/import/midi?name=la-native.mid", content=data,
+                    headers={"Content-Type": "application/octet-stream", "Origin": "http://127.0.0.1:8020"})
+    assert r.status_code == 200, r.text
+    info = r.json()
+    assert info["file"] == "la-native.mid" and info["title"] == "La native"
+    assert [(t["name"], t["note_count"], t["default"]) for t in info["tracks"]] == [("upper", 86, True), ("lower", 86, True)]
+    r = client.post(f"/api/import/midi/{info['token']}/song", json={"parts": [0, 1], "swap": False, "quantize": 16,
+                                                                   "title": "La Native"})
+    assert r.status_code == 200, r.text
+    card = r.json()["song"]
+    assert card["source"] == "midi" and card["title"] == "La Native" and card["hands"] == ["R", "L"]
+    assert card["difficulty"]["text"].startswith("This song needs: ")
+    listed = client.get("/api/songs").json()
+    assert listed["user_level"] == 1
+    assert [s["id"] for s in listed["songs"]][-1] == card["id"]
+    song = client.get(f"/api/songs/{card['id']}").json()
+    assert song["import"]["quantize"] == 16 and len(song["notes"]) == 172
+    # The original file is kept next to the song.
+    from riyaz import config
+
+    assert (config.user_songs_path() / f"{card['id']}.mid").read_bytes() == data
+    # The imported song starts in wait mode.
+    r = client.post("/api/practice/start", json={"song_id": card["id"], "mode": "wait", "hands": ["R", "L"]})
+    assert r.status_code == 200 and r.json()["song_id"] == card["id"]
+    client.post("/api/practice/stop", json={})
+
+
+def test_import_errors(client):
+    r = client.post("/api/import/midi?name=x.txt", content=b"hello")
+    assert r.status_code == 400 and r.json()["detail"].startswith("This file is not a MIDI file.")
+    r = client.post("/api/import/midi", content=b"")
+    assert r.status_code == 400 and "empty" in r.json()["detail"]
+    from riyaz import config
+
+    r = client.post("/api/import/midi", content=b"MThd" + b"0" * config.IMPORT_MAX_BYTES)
+    assert r.status_code == 413 and "too large" in r.json()["detail"]
+    r = client.post("/api/import/midi/nope/song", json={"parts": [0]})
+    assert r.status_code == 404 and r.json()["detail"] == "The app cannot find the file. Select the file again."
+    data = (MIDI_DIR / "la-native.mid").read_bytes()
+    token = client.post("/api/import/midi", content=data).json()["token"]
+    r = client.post(f"/api/import/midi/{token}/song", json={"parts": []})
+    assert r.status_code == 400 and r.json()["detail"] == "Select one or more tracks."
+    r = client.post(f"/api/import/midi/{token}/song", json={"parts": [5]})
+    assert r.status_code == 400
+
+
+def test_import_post_needs_own_origin(client):
+    data = (MIDI_DIR / "la-native.mid").read_bytes()
+    r = client.post("/api/import/midi", content=data, headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+    token = client.post("/api/import/midi", content=data).json()["token"]
+    r = client.post(f"/api/import/midi/{token}/song", json={"parts": [0]}, headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+
+
+def test_import_pending_files_are_limited(client):
+    from riyaz import config
+
+    data = (MIDI_DIR / "synthetic" / "drums.mid").read_bytes()
+    tokens = [client.post("/api/import/midi", content=data).json()["token"] for _ in range(config.IMPORT_PENDING_MAX + 2)]
+    assert client.post(f"/api/import/midi/{tokens[0]}/song", json={"parts": [0]}).status_code == 404
+    assert client.post(f"/api/import/midi/{tokens[-1]}/song", json={"parts": [0]}).status_code == 200
+
+
+def test_imported_song_text_has_no_locked_words(client):
+    for name in ("la-native.mid", "les-graces-one-track.mid", "synthetic/drums.mid"):
+        data = (MIDI_DIR / name).read_bytes()
+        token = client.post(f"/api/import/midi?name={Path(name).name}", content=data).json()["token"]
+        card = client.post(f"/api/import/midi/{token}/song", json={"parts": [0]}).json()["song"]
+        song = client.get(f"/api/songs/{card['id']}").json()
+        text = " ".join([card["difficulty"]["text"]] + [s["name"] for s in song["sections"]])
+        assert not LOCKED.search(text), text

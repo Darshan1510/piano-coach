@@ -1,4 +1,4 @@
-"""Built-in songs (PLAN 5.1, 5.4, 8.3 Levels 1-2): format, fingering, hand positions, words."""
+"""Built-in songs (PLAN 5.1, 5.4, 8.3 Levels 1-3): format, fingering, hand positions, words."""
 
 import json
 import re
@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILTIN = {
     "mary-had-a-little-lamb": 1, "ode-to-joy": 1, "twinkle-twinkle": 1,
     "au-clair-de-la-lune": 2, "frere-jacques": 2, "london-bridge": 2,
+    "ode-to-joy-left-hand": 3, "twinkle-twinkle-left-hand": 3, "frere-jacques-both-hands": 3,
 }
 # Words that a Level 1-2 user has not learned yet (PLAN 7.4).
 LOCKED = re.compile(r"\b(bar|bars|measure|tempo|beat|beats|chord|chords|rest|rests|scale|interval|"
@@ -23,12 +24,12 @@ def builtin():
     return {sid: s for sid, s in songs.load_all().items() if sid in BUILTIN}
 
 
-def test_six_builtin_songs_load():
+def test_nine_builtin_songs_load():
     got = builtin()
     assert set(got) == set(BUILTIN)
     for sid, level in BUILTIN.items():
         assert got[sid]["level"] == level
-    assert len(list((ROOT / "data" / "songs").glob("*.json"))) == 6
+    assert len(list((ROOT / "data" / "songs").glob("*.json"))) == 9
 
 
 def _position_at(song, hand, beat):
@@ -58,7 +59,7 @@ def test_song_shape(sid):
     for n in song["notes"]:
         assert (n["start"] * 2).is_integer() and (n["dur"] * 2).is_integer()  # half beats
         assert 36 <= n["pitch"] <= 96
-        assert n["pitch"] % 12 not in (1, 3, 6, 8, 10), "Level 1-2: white keys only"
+        assert n["pitch"] % 12 not in (1, 3, 6, 8, 10), "Level 1-3: white keys only"
     # One hand plays one note at a time (no keys together before Level 5), with no overlap.
     for hand in songs.hands_of(song):
         hn = [n for n in song["notes"] if n["hand"] == hand]
@@ -71,7 +72,8 @@ def test_song_shape(sid):
         assert a["end"] == b["start"]
     assert [s["name"] for s in secs] == [f"Part {i + 1}" for i in range(len(secs))]
     assert song["end"] % song["time_signature"][0] == 0
-    assert "R" in songs.hands_of(song)
+    assert songs.hands_of(song) == (["L"] if sid.endswith("-left-hand") else ["R", "L"] if sid.endswith("-both-hands")
+                                    else songs.hands_of(song))
     assert not LOCKED.search(song["title"] + " " + " ".join(s["name"] for s in secs))
 
 
@@ -85,6 +87,15 @@ def test_melodies_start_correctly():
         "frere-jacques": [60, 62, 64, 60, 60, 62, 64, 60, 64, 65, 67],
         "london-bridge": [67, 69, 67, 65, 64, 65, 67],
     }
+    # Level 3: the left hand plays the same melodies, one octave lower.
+    for sid in ("ode-to-joy", "twinkle-twinkle"):
+        left = sorted((n for n in builtin()[f"{sid}-left-hand"]["notes"]), key=lambda n: n["start"])
+        right = sorted((n for n in builtin()[sid]["notes"] if n["hand"] == "R"), key=lambda n: n["start"])
+        assert [(n["pitch"] + 12, n["start"], n["dur"]) for n in left] == [(n["pitch"], n["start"], n["dur"]) for n in right]
+    both = builtin()["frere-jacques-both-hands"]
+    assert [n for n in both["notes"] if n["hand"] == "R"] == [
+        {**n, "id": m["id"]} for n, m in zip([x for x in builtin()["frere-jacques"]["notes"] if x["hand"] == "R"],
+                                             [x for x in both["notes"] if x["hand"] == "R"])]
     # Rhythm of the first phrase, in counts (1 = one click). The notes follow each other (no gap).
     rhythm = {
         "mary-had-a-little-lamb": [1, 1, 1, 1, 1, 1, 2],
@@ -108,7 +119,8 @@ def test_melodies_start_correctly():
 def test_summaries_sorted_by_level_then_order():
     summ = [s for s in songs.list_summaries() if s["id"] in BUILTIN]
     assert [s["id"] for s in summ] == ["mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle",
-                                      "au-clair-de-la-lune", "frere-jacques", "london-bridge"]
+                                      "au-clair-de-la-lune", "frere-jacques", "london-bridge",
+                                      "ode-to-joy-left-hand", "twinkle-twinkle-left-hand", "frere-jacques-both-hands"]
     mary = summ[0]
     assert mary["hands"] == ["R"] and mary["beats"] == 32 and mary["seconds"] == round(32 * 60 / 90)
     assert summ[3]["hands"] == ["R", "L"]

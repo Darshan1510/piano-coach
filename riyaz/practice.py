@@ -16,6 +16,9 @@ Events (WebSocket, all new in Phase 2; Phase 1 events do not change):
   practice_hit    {pitch, stop, song_id, run}                  a correct key
   practice_wrong  {pitch, expected, beat, stop, song_id, run}  a wrong key: no advance, logged
   practice_end    {completed, mode, wrong, stops, seconds, ...}
+Phase 3b (fields added, old fields kept):
+  practice_end    + accuracy (% of stops with a right first key), clean_stops, section, errors
+  practice_skill  {skill, beat, song_id, run}: the song stopped before a new skill (PLAN 8.2)
 """
 
 from __future__ import annotations
@@ -116,6 +119,7 @@ class Practice:
         self.wrong = 0
         self.started_t = 0.0
         self.matcher: WaitMatcher | None = None
+        self.breaks: list[tuple[float, str]] = []  # (at beat, skill id): stop before a new skill
         self._app_notes: list[dict] = []
         self._out_i = 0
         self._sounding: list[tuple[float, int]] = []  # (off time, pitch) on the keyboard output
@@ -173,7 +177,7 @@ class Practice:
 
     def start(self, song: dict, mode: str = "wait", hands=("R",), speed: float = 1.0,
               section: int | None = None, count_in: bool = True, accompany: bool = True,
-              output: str = "mac") -> dict:
+              output: str = "mac", breaks: list | None = None, loop: bool | None = None) -> dict:
         if not isinstance(mode, str) or mode not in MODES:
             raise PracticeError("Select Watch or Play.")
         if not isinstance(output, str) or output not in OUTPUTS:
@@ -203,12 +207,14 @@ class Practice:
             else:
                 s = sections[section]
                 self.range_start, self.range_end = s["start"], min(s["end"], song["end"])
-                self.section, self.loop = section, True
+                # A part repeats ("Repeat Part N"). loop=False (daily session): play the part one time.
+                self.section, self.loop = section, loop is not False
             self.count_in = float(song["time_signature"][0]) if count_in else 0.0
             self.accompany = bool(accompany)
             self.output = output
             if mode == "wait":
                 self.matcher = WaitMatcher.for_song(song, hands, self.range_start, self.range_end)
+                self.breaks = _check_breaks(breaks, self.range_start, self.range_end)
             self._app_notes = self._select_app_notes()
             t = self.now()
             self._anchor(t, self.range_start - self.count_in)
@@ -298,6 +304,8 @@ class Practice:
             b = hold
         else:
             b = min(raw, self.range_end)
+        if self.breaks and self._break_due(b):
+            return msgs_then(self._schedule_output(t, b), self._skill_break(t))
         msgs = self._schedule_output(t, b)
         if hold is None and raw >= self.range_end - EPS:
             if self.loop:
@@ -305,6 +313,56 @@ class Practice:
             else:
                 msgs += self._finish(t)
         return msgs
+
+    def _break_due(self, b: float) -> bool:
+        """All stops before the new skill are done and the song is half a beat before it."""
+        at, _ = self.breaks[0]
+        m = self.matcher
+        before_done = m is None or m.current is None or m.current.beat >= at - EPS
+        return before_done and b >= at - config.SKILL_BREAK_LEAD_BEATS - EPS
+
+    def _skill_break(self, t: float) -> list:
+        at, skill = self.breaks.pop(0)
+        b = self._beat(t)
+        self._anchor(t, b)
+        self.running = False
+        self.paused = True
+        self.pause_reason = "skill"
+        self.waiting = False
+        msgs = self._all_off()
+        self._out_i = self._first_app_note(b)
+        self._emit({"type": "practice_skill", "skill": skill, "beat": at, "song_id": self.song["id"],
+                    "run": self.run})
+        self._emit_state(t)
+        return msgs
+
+    def seek(self, beat: float, run: int | None = None, resume: bool = True) -> dict:
+        """Go back to a beat (after a skill moment: "the song continues from just before", PLAN 8.2).
+        The song starts LEAD beat before it, so that the user sees the next note fall."""
+        msgs = []
+        with self._lock:
+            t = self.now()
+            ok = (self.song is not None and not self.done and (run is None or run == self.run)
+                  and isinstance(beat, (int, float)) and not isinstance(beat, bool))
+            if ok:
+                beat = min(max(float(beat), self.range_start), self.range_end)
+                msgs = self._all_off()
+                if self.matcher is not None:
+                    m = self.matcher
+                    m.index = next((i for i, st in enumerate(m.stops) if st.beat >= beat - EPS), len(m.stops))
+                    m._presses.clear()
+                lead = beat - config.SEEK_LEAD_BEATS  # before the range start = a short silent lead-in
+                self._anchor(t, lead)
+                self._out_i = self._first_app_note(lead)
+                self.waiting = False
+                if resume:
+                    self.running = True
+                    self.paused = False
+                    self.pause_reason = None
+            state = self._emit_state(t)
+        self._send(msgs)
+        self._wake.set()
+        return state
 
     def _wrap(self, t: float, raw: float) -> list:
         """Loop a part: start the part again (no count-in)."""
@@ -325,10 +383,17 @@ class Practice:
         self.running = False
         self.done = True
         self.waiting = False
-        stops = len(self.matcher.stops) if self.matcher is not None else 0
+        m = self.matcher
+        stops = len(m.stops) if m is not None else 0
+        extra: dict = {"section": self.section, "range": [self.range_start, self.range_end]}
+        if m is not None:
+            bad = {e["stop"] for e in m.errors}
+            clean = stops - len(bad)
+            extra.update(clean_stops=clean, accuracy=round(100.0 * clean / stops, 1) if stops else 100.0,
+                         errors=[{"beat": m.stops[e["stop"]].beat, "pitch": e["pitch"]} for e in m.errors][:500])
         self._emit({"type": "practice_end", "song_id": self.song["id"], "mode": self.mode, "completed": True,
                     "hands": list(self.hands), "wrong": self.wrong, "stops": stops,
-                    "seconds": round(t - self.started_t, 2), "speed": self.speed})
+                    "seconds": round(t - self.started_t, 2), "speed": self.speed, "run": self.run, **extra})
         self._emit_state(t)
         return msgs
 
@@ -470,6 +535,23 @@ class Practice:
             "count_in": self.count_in, "passes": self.passes, "wrong": self.wrong,
             "accompany": self.accompany, "output": self.output,
         }
+
+
+def msgs_then(a: list, b: list) -> list:
+    return a + b
+
+
+def _check_breaks(breaks, start: float, end: float) -> list[tuple[float, str]]:
+    """Skill moments inside the range (a skill at the start is shown before the song starts)."""
+    out = []
+    for b in breaks or []:
+        if not isinstance(b, dict):
+            continue
+        at, skill = b.get("beat"), b.get("skill")
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and isinstance(skill, str) \
+                and start + EPS < at < end - EPS:
+            out.append((float(at), skill[:64]))
+    return sorted(out)
 
 
 def clamp_speed(speed: Any) -> float:
