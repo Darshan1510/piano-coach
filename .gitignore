@@ -1,0 +1,19 @@
+# Project-local environment and downloads (see README "Project-local environment")
+.venv/
+.cache/
+models/
+vendor-downloads/
+cache/
+recordings/
+
+# Build output
+build/
+dist/
+*.zip
+
+# Python / tools
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.DS_Store
