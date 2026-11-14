@@ -27,3 +27,9 @@
 - Words page: play the demo inside the card on the page (now it opens the card).
 - Bar lines: an option to show them before Level 3.
 - Practice time: also count watch mode (listening) as practice time.
+- Play-along: detect "the user started the phrase again" (restart), not only a stop of 2 s.
+- Findings also after wait-mode runs (hard spot from the wrong keys; wait mode has no timing).
+- Automatic speed per song (now one speed setting for all songs; the adapt step changes it).
+- "Practice these 3 keys" as a small drill (keys together, 3 tries) instead of a wait-mode loop.
+- Progress page: show the reviews that are due on the Today screen as well, with the date.
+- Skill model: a short history line for each skill (is it going up?).

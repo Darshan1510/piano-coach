@@ -129,7 +129,7 @@
         <div class="today-grid">
           <div class="today-main">
             <div class="card today-block-card hidden" id="today-block">
-              <div class="card-eyebrow" id="today-block-eyebrow">Part 1 of 4</div>
+              <div class="card-eyebrow" id="today-block-eyebrow">Step 1 of 4</div>
               <h2 id="today-block-title">Warm-up</h2>
               <p id="today-block-text"></p>
               <div id="today-steps" class="today-steps"></div>
@@ -140,7 +140,7 @@
               <div class="today-foot">
                 <div class="today-timer"><span id="today-timer-text" class="today-timer-text"></span><div class="today-timer-bar"><i id="today-timer-fill"></i></div></div>
                 <span id="today-block-status" class="today-block-status"></span>
-                <button id="today-skip" class="btn btn-ghost">Skip this part</button>
+                <button id="today-skip" class="btn btn-ghost">Skip this step</button>
                 <button id="today-next" class="btn btn-lg">Next</button>
               </div>
             </div>
@@ -196,6 +196,49 @@
             <div id="habit-calendar" class="habit-calendar" role="img" aria-label="Practice calendar of the last 18 weeks"></div>
             <p class="habit-legend muted"><span>Less</span><i class="cal-cell l0"></i><i class="cal-cell l1"></i><i class="cal-cell l2"></i><i class="cal-cell l3"></i><span>More</span><i class="cal-cell frozen"></i><span>Free day</span></p>
           </aside>
+        </div>
+      </section>
+
+      <!-- ===================== Progress (Phase 4): skills, calendar, scores over time ===================== -->
+      <section id="screen-progress" class="screen hidden">
+        <div class="progress-grid">
+          <div class="card progress-skills">
+            <div class="card-eyebrow">Your skills</div>
+            <h2 class="today-h">What you can do</h2>
+            <p class="muted">Each skill is a number from 0 to 100. The app makes it from your results. The weakest skill gets the warm-up.</p>
+            <div class="progress-skills-body">
+              <div id="pg-radar" class="pg-radar"></div>
+              <div class="pg-skill-list">
+                <table class="pg-table" id="pg-skill-table">
+                  <caption class="sr-only">Your skills, from 0 to 100</caption>
+                  <thead><tr><th scope="col">Skill</th><th scope="col">Level</th><th scope="col">Results</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+                <p id="pg-skill-note" class="muted pg-skill-note">— = no results yet. These skills come in later lessons, or when you play more songs.</p>
+              </div>
+            </div>
+          </div>
+          <div class="card progress-scores">
+            <div class="card-head">
+              <div><div class="card-eyebrow">Songs</div><h2 class="today-h">Your results over time</h2></div>
+              <label class="pg-song-pick"><span class="pr-label">Song</span> <select id="pg-song" class="select"></select></label>
+            </div>
+            <div id="pg-chart" class="pg-chart"></div>
+            <table class="pg-table pg-runs" id="pg-run-table">
+              <caption class="sr-only">Results of each run</caption>
+              <thead><tr><th scope="col">Day</th><th scope="col">How</th><th scope="col">Result</th><th scope="col">Speed</th><th scope="col">What</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="card progress-cal">
+            <div class="card-eyebrow">Habit</div>
+            <h2 class="today-h">Practice calendar</h2>
+            <p id="pg-streak" class="muted"></p>
+            <div id="pg-calendar" class="habit-calendar" role="img" aria-label="Practice calendar of the last 18 weeks"></div>
+            <p class="habit-legend muted"><span>Less</span><i class="cal-cell l0"></i><i class="cal-cell l1"></i><i class="cal-cell l2"></i><i class="cal-cell l3"></i><span>More</span><i class="cal-cell frozen"></i><span>Free day</span></p>
+            <h3 class="habit-cal-title">Play again soon</h3>
+            <ul id="pg-reviews" class="pg-reviews"></ul>
+          </div>
         </div>
       </section>
 
@@ -329,8 +372,9 @@
           <div class="pr-group">
             <div class="pr-label">How</div>
             <div id="pr-mode" class="segmented" role="radiogroup" aria-label="How to practice">
-              <button class="seg" role="radio" data-mode="watch">Watch</button>
-              <button class="seg" role="radio" data-mode="wait">Play</button>
+              <button class="seg" role="radio" data-mode="watch" title="The app plays the song. You listen.">Watch</button>
+              <button class="seg" role="radio" data-mode="wait" title="The song waits for you at each key.">Play</button>
+              <button class="seg" role="radio" data-mode="play" title="The song does not wait. The app gives you points for each key.">Play along</button>
             </div>
           </div>
           <div class="pr-group" id="pr-hands-group">
@@ -355,6 +399,8 @@
             <label class="switch"><input type="checkbox" id="pr-countin" checked><span class="switch-track"></span> <span id="pr-countin-label">4 clicks before the start</span></label>
             <label class="switch" id="pr-accompany-row"><input type="checkbox" id="pr-accompany" checked><span class="switch-track"></span> <span id="pr-accompany-label">The app plays the left hand</span></label>
             <!-- Only when the keyboard can receive notes (setup step 5). -->
+            <label class="switch hidden" id="pr-adapt-row" title="After 3 hard runs the song gets slower. After 3 good runs it gets faster."><input type="checkbox" id="pr-adapt" checked><span class="switch-track"></span> Change the speed for me</label>
+            <label class="switch hidden" id="pr-loopstep-row"><input type="checkbox" id="pr-loopstep" checked><span class="switch-track"></span> Go faster after 3 good runs</label>
             <label class="switch hidden" id="pr-kbsound-row"><input type="checkbox" id="pr-kbsound"><span class="switch-track"></span> Play the song on the keyboard speaker</label>
           </div>
           </div>
@@ -393,10 +439,20 @@
             </div>
           </div>
           <div id="pr-end" class="pr-end hidden">
-            <div class="pr-end-card">
-              <h2 id="pr-end-title">Well done!</h2>
+            <div class="pr-end-card" id="pr-end-card">
+              <div class="pr-end-head"><h2 id="pr-end-title">Well done!</h2>
+              <div id="pr-end-score" class="pr-score hidden">
+                <div class="pr-score-main"><span id="pr-score-stars" class="pr-stars" role="img"></span><span id="pr-score-total" class="pr-score-total">0</span><span class="pr-score-of">points of 100</span></div>
+                <div class="pr-score-tiles">
+                  <div class="pr-score-tile"><b id="pr-score-acc">0%</b><span>Right keys</span></div>
+                  <div class="pr-score-tile"><b id="pr-score-time">0%</b><span>On time</span></div>
+                  <div class="pr-score-tile"><b id="pr-score-len">0%</b><span>Held long enough</span></div>
+                </div>
+              </div></div>
               <p id="pr-end-text"></p>
+              <div id="pr-end-adapt" class="pr-end-adapt hidden" role="status"><span id="pr-end-adapt-text"></span><button id="pr-end-next" class="btn btn-sm hidden"></button></div>
               <p id="pr-end-goal" class="pr-end-goal"></p>
+              <div id="pr-findings" class="pr-findings hidden" aria-label="What to practice next"></div>
               <div class="btn-row">
                 <button id="pr-end-again" class="btn primary btn-lg">Play again</button>
                 <button id="pr-end-play" class="btn primary btn-lg hidden">Play it now</button>
@@ -585,6 +641,22 @@
               <button id="set-notify-test" class="btn btn-sm">Send a test reminder</button>
             </div>
             <p class="muted set-hint">The reminder is a Mac notification: "Time for your Riyaz." The app must be open. It does not come when you reached your daily goal.</p>
+          </div>
+          <div class="card" id="settings-tap">
+            <h3>Tap with the click</h3>
+            <p class="muted">The Mac sound and the cable can make a small delay. This check finds the delay. Then Play along counts your keys at the correct time.</p>
+            <ol class="tap-steps">
+              <li>Click "Start the check".</li>
+              <li>Listen to the 8 clicks.</li>
+              <li>Press any key on the keyboard with each click.</li>
+            </ol>
+            <div class="tap-dots" id="tap-dots" aria-hidden="true"></div>
+            <p class="tap-status" id="tap-status" role="status" aria-live="polite"></p>
+            <div class="set-row tap-row">
+              <button id="tap-start" class="btn btn-lg">Start the check</button>
+              <button id="tap-reset" class="btn btn-sm">Remove the correction</button>
+              <span class="muted" id="tap-now"></span>
+            </div>
           </div>
           <div class="card">
             <h3>Setup</h3>

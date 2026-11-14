@@ -126,12 +126,13 @@ def test_practice_start_errors(client):
 
 
 def test_practice_options_are_kept(client):
-    assert client.get("/api/settings/practice").json() == {"speed": 1.0, "click": False, "count_in": True}
+    on = {"adapt": True, "loop_step": True}  # Phase 4: automatic speed changes, on by default (PLAN 7.3)
+    assert client.get("/api/settings/practice").json() == {"speed": 1.0, "click": False, "count_in": True, **on}
     r = client.post("/api/settings/practice", json={"speed": 0.6, "click": True, "count_in": False}).json()
-    assert r == {"speed": 0.6, "click": True, "count_in": False}
+    assert r == {"speed": 0.6, "click": True, "count_in": False, **on}
     # bad values: speed is clamped, a non-bool is ignored
-    r = client.post("/api/settings/practice", json={"speed": 99, "click": "yes"}).json()
-    assert r == {"speed": 1.5, "click": True, "count_in": False}
+    r = client.post("/api/settings/practice", json={"speed": 99, "click": "yes", "adapt": "no", "loop_step": False}).json()
+    assert r == {"speed": 1.5, "click": True, "count_in": False, "adapt": True, "loop_step": False}
     assert client.get("/api/settings/practice").json() == r
     store = client.app_ref.state.riyaz["store"]
     assert store.get("practice.options") == r  # in the settings database (stays after a restart)
@@ -148,7 +149,8 @@ LOCKED = re.compile(r"\b(sharp|flat|major|minor|scale|interval|progression|bar|m
                     r"rest)s?\b", re.I)
 UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js",
             "/static/js/importer.js", "/static/js/terms.js", "/static/js/drill.js", "/static/js/course.js",
-            "/static/js/basics.js", "/static/js/today.js", "/static/js/renderer.js", "/static/js/keyboard.js")
+            "/static/js/basics.js", "/static/js/today.js", "/static/js/renderer.js", "/static/js/keyboard.js",
+            "/static/js/progress.js")
 
 
 def shown_strings(src: str) -> list[str]:

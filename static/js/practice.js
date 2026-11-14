@@ -7,9 +7,15 @@
 //
 // Words (PLAN 7.4, Level 1-2): "speed" (not tempo), "the click" (not beat), "Part 1" (not bar),
 // "pause", "keys together". No bar lines before Level 3.
+//
+// Phase 4 play-along (mode "play"): the song does not wait. Keys turn green (on time), yellow
+// (early or late) or red (wrong) (PLAN 7.1); one tip at a time from the backend (practice_tip).
+// If the user stops, the song pauses at the stop point: "Continue from here". After the run: the
+// score, at most 3 findings with a preview, "Show me" and an action button (PLAN 7.2), and the
+// automatic speed change (PLAN 7.3).
 
 import { Keyboard, keyLayout, keyName } from "/static/js/keyboard.js";
-import { FallingNotes } from "/static/js/renderer.js";
+import { FallingNotes, PreviewView } from "/static/js/renderer.js";
 import { HandsView, positionAt, positionsOf } from "/static/js/hands.js";
 import { handsText } from "/static/js/songs.js";
 import { DrillPanel } from "/static/js/drill.js";
@@ -89,8 +95,11 @@ export class PracticeScreen {
     this.ps = null; // last practice state from the backend (this song)
     this.visible = false;
     this.opts = { mode: "wait", hands: ["R"], section: null, speed: 1, click: false, countIn: true,
-      accompany: true, kbSound: false };
-    this.marks = { wrong: new Map(), hit: new Map() }; // pitch -> time when set
+      accompany: true, kbSound: false, adapt: true, loopStep: true, span: null };
+    this.results = new Map(); // play-along: note id -> "hit" | "miss" (red notes on the view)
+    this.place = null; // the place that a finding names (band on the falling notes)
+    this.peek = null; // after a run: the view shows this beat (the place of a finding)
+    this.marks = { wrong: new Map(), hit: new Map(), timing: new Map() }; // pitch -> time when set
     this.down = new Set();
     this.banner = { text: "", until: 0 };
     this.frameTimes = [];
@@ -135,11 +144,15 @@ export class PracticeScreen {
     this.handsPresent = ["R", "L"].filter((h) => song.notes.some((n) => n.hand === h));
     this.opts.hands = this.handsPresent.includes("R") ? ["R"] : [this.handsPresent[0]];
     this.opts.section = null;
+    this.opts.span = null;
+    this.place = null;
+    this.peek = null;
     const pre = opts.preset || {};
     if (pre.mode) this.opts.mode = pre.mode;
     if (Array.isArray(pre.hands) && pre.hands.every((h) => this.handsPresent.includes(h))) this.opts.hands = pre.hands;
     if (Number.isInteger(pre.section) && song.sections[pre.section]) this.opts.section = pre.section;
     if (typeof pre.speed === "number") this.opts.speed = pre.speed;
+    if (Array.isArray(pre.span)) this.opts.span = pre.span;
     this.opts.loop = pre.loop === false ? false : null; // daily session: a part plays one time
     this.moments = (await this.api(`/api/course/moments/${encodeURIComponent(song.id)}`).catch(() => ({ moments: [] }))).moments;
     this._hideSkill();
@@ -227,10 +240,21 @@ export class PracticeScreen {
     for (const b of document.querySelectorAll("#pr-hands .seg")) {
       b.addEventListener("click", () => this._setOpt("hands", b.dataset.hands.split("")));
     }
-    $("pr-part").addEventListener("change", (e) => { this.opts.loop = null; this._setOpt("section", e.target.value === "" ? null : Number(e.target.value)); });
+    $("pr-part").addEventListener("change", (e) => { this.opts.loop = null; this.opts.span = null; this.place = null; this._setOpt("section", e.target.value === "" ? null : Number(e.target.value)); });
     $("pr-countin").addEventListener("change", (e) => { this._setOpt("countIn", e.target.checked); this._saveOptions(); });
     $("pr-accompany").addEventListener("change", (e) => this._setOpt("accompany", e.target.checked));
     $("pr-kbsound").addEventListener("change", (e) => this._setOpt("kbSound", e.target.checked));
+    $("pr-adapt").addEventListener("change", (e) => { this.opts.adapt = e.target.checked; this._saveOptions(); });
+    $("pr-loopstep").addEventListener("change", (e) => { this.opts.loopStep = e.target.checked; this._saveOptions(); });
+    $("pr-end-next").addEventListener("click", () => this._nextStep());
+    $("pr-findings").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-act]");
+      if (b) this._findingButton(Number(b.dataset.i), b.dataset.act);
+    });
+    $("pr-findings").addEventListener("focusin", (e) => {
+      const card = e.target.closest(".pr-finding");
+      if (card) this._focusFinding(Number(card.dataset.i));
+    });
     $("pr-click").addEventListener("change", (e) => {
       this.opts.click = e.target.checked;
       this._resetAudio();
@@ -261,13 +285,23 @@ export class PracticeScreen {
 
     this.link.on("practice", (s) => this._onState(s));
     this.link.on("practice_wrong", (e) => { if (this._ours(e)) this._onWrong(e); });
-    this.link.on("practice_hit", (e) => { if (this._ours(e)) this._mark("hit", e.pitch); });
+    this.link.on("practice_hit", (e) => {
+      if (!this._ours(e)) return;
+      // play-along: green on time, yellow early or late (PLAN 7.1)
+      this._mark(e.grade === "early" || e.grade === "late" ? "timing" : "hit", e.pitch);
+      if (e.note !== undefined && e.note !== null && this.playIds) this.results.set(this.playIds[e.note], "hit");
+    });
+    this.link.on("practice_miss", (e) => {
+      if (this._ours(e) && this.playIds) this.results.set(this.playIds[e.note], "miss");
+    });
+    this.link.on("practice_tip", (e) => { if (this._ours(e)) this._say(this.terms ? this.terms.plainText(e.text) : e.text, 3500, "tip"); });
+    this.link.on("practice_pass", (e) => { if (this._ours(e)) this._onPass(e); });
     this.link.on("practice_end", (e) => this._onEnd(e));
     this.link.on("note_on", (e) => { this.down.add(e.pitch); this.kb.setDown(e.pitch, true); });
     this.link.on("note_off", (e) => {
       this.down.delete(e.pitch);
       this.kb.setDown(e.pitch, false);
-      for (const kind of ["wrong", "hit"]) this._unmarkLater(kind, e.pitch);
+      for (const kind of ["wrong", "hit", "timing"]) this._unmarkLater(kind, e.pitch);
     });
   }
 
@@ -299,6 +333,8 @@ export class PracticeScreen {
       this.opts.speed = o.speed;
       this.opts.click = o.click;
       this.opts.countIn = o.count_in;
+      this.opts.adapt = o.adapt !== false;
+      this.opts.loopStep = o.loop_step !== false;
       this._renderControls();
       this._applyView();
     } catch { /* keep the defaults */ }
@@ -306,7 +342,8 @@ export class PracticeScreen {
 
   _saveOptions() {
     const o = this.opts;
-    this.api("/api/settings/practice", { speed: o.speed, click: o.click, count_in: o.countIn }).catch(() => {});
+    this.api("/api/settings/practice", { speed: o.speed, click: o.click, count_in: o.countIn, adapt: o.adapt,
+      loop_step: o.loopStep }).catch(() => {});
   }
 
   _renderControls() {
@@ -321,7 +358,11 @@ export class PracticeScreen {
     }
     $("pr-hands-group").classList.toggle("hidden", this.handsPresent.length < 2);
     const other = this.handsPresent.find((h) => !o.hands.includes(h));
-    $("pr-accompany-row").classList.toggle("hidden", !other || o.mode !== "wait");
+    $("pr-accompany-row").classList.toggle("hidden", !other || o.mode === "watch");
+    $("pr-adapt-row").classList.toggle("hidden", o.mode !== "play");
+    $("pr-adapt").checked = o.adapt;
+    $("pr-loopstep-row").classList.toggle("hidden", o.mode !== "play" || (o.section === null && !o.span));
+    $("pr-loopstep").checked = o.loopStep;
     if (other) $("pr-accompany-label").textContent = `The app plays the ${HAND[other]}`;
     $("pr-accompany").checked = o.accompany;
     const canKb = !!(this.getStatus().output);
@@ -336,7 +377,9 @@ export class PracticeScreen {
     const ps = this.ps;
     const running = ps && ps.running;
     const paused = ps && ps.paused;
-    $("pr-start-text").textContent = running ? "Pause" : paused ? "Continue" : o.mode === "wait" ? "Start playing" : "Start watching";
+    const stopped = paused && ps.pause_reason === "stopped";
+    $("pr-start-text").textContent = running ? "Pause" : stopped ? "Continue from here" : paused ? "Continue"
+      : o.mode === "wait" ? "Start playing" : o.mode === "play" ? "Start playing along" : "Start watching";
     $("pr-start").classList.toggle("is-running", !!running);
     $("pr-restart").classList.toggle("hidden", !(running || paused));
   }
@@ -344,6 +387,9 @@ export class PracticeScreen {
   async _primary() {
     const ps = this.ps;
     if (ps && ps.running) return this._onState(await this.api("/api/practice/pause", { reason: "user" }));
+    if (ps && ps.paused && ps.pause_reason === "stopped" && ps.stop_beat !== null) {
+      return this._onState(await this.api("/api/practice/seek", { beat: ps.stop_beat, run: ps.run }));
+    }
     if (ps && ps.paused) return this._onState(await this.api("/api/practice/resume", {}));
     return this.start();
   }
@@ -371,8 +417,11 @@ export class PracticeScreen {
         song_id: this.song.id, mode: o.mode, hands: o.hands, speed: o.speed, section: o.section,
         count_in: o.countIn, accompany: o.accompany, output: o.kbSound ? "keyboard" : "mac",
         breaks: moments.map((m) => ({ beat: m.at_beat, skill: m.id })),
-        ...(o.loop === false && o.section !== null ? { loop: false } : {}),
+        ...(o.loop === false && (o.section !== null || o.span) ? { loop: false } : {}),
+        ...(o.span ? { span: o.span, section: null } : {}),
       });
+      this.results = new Map();
+      this.peek = null;
       this._onState(s); // a new run: _onState sets the sound schedule from its anchor
     } catch (err) {
       this._say(err.message, 4000);
@@ -400,6 +449,13 @@ export class PracticeScreen {
     if (this.ps && s.seq < this.ps.seq && s.song_id === this.ps.song_id) return; // older message
     const prev = this.ps;
     this.ps = s;
+    if (s.mode === "play" && (!prev || prev.run !== s.run || prev.passes !== s.passes)) {
+      // The backend numbers the notes of the run (active hands, in the range) in start order.
+      const hs = new Set(s.hands);
+      this.playIds = this.song.notes.filter((n) => hs.has(n.hand) && n.start >= s.range[0] - 1e-6 && n.start < s.range[1] - 1e-6)
+        .sort((a, b) => a.start - b.start || a.pitch - b.pitch).map((n) => n.id);
+      this.results = new Map();
+    }
     this.fallbackOffset = s.t - performance.now() / 1000;
     const beat = this._beatOf(s);
     if (!s.running) this.piano.releaseAll();
@@ -416,12 +472,32 @@ export class PracticeScreen {
   _onWrong(e) {
     this._mark("wrong", e.pitch);
     this.renderer.flashWrong(e.pitch);
+    if (this.ps && this.ps.mode === "play") return; // play-along: the key is red; the tips come from the backend
     const exp = this._expectedText((e.expected || []).map((p) => ({ pitch: p })));
     this._say(`Not this key. ${exp}`, 1800);
   }
 
+  // One pass of a repeated part (play-along Loop): the points, and the automatic speed step.
+  _onPass(e) {
+    const sc = e.score;
+    let text = `Run ${e.pass}: ${sc.total} points. ${"★".repeat(sc.stars)}`;
+    if (e.adapt) {
+      text = `${text} ${this.terms ? this.terms.plainText(e.adapt.text) : e.adapt.text}`;
+      this.opts.speed = e.adapt.speed;
+      this._renderControls();
+    }
+    this._say(text, 4000, e.adapt ? "go" : "");
+  }
+
   _onEnd(e) {
     if (!this.song || e.song_id !== this.song.id) return;
+    $("pr-findings").classList.add("hidden");
+    $("pr-findings").innerHTML = "";
+    $("pr-end-adapt").classList.add("hidden");
+    $("pr-end-score").classList.toggle("hidden", e.mode !== "play");
+    $("pr-end-card").classList.toggle("is-play", e.mode === "play");
+    this.lastEnd = e;
+    if (e.mode === "play") return this._onPlayEnd(e);
     const wait = e.mode === "wait";
     $("pr-end-title").textContent = wait ? "Well done! You played the whole song." : "This is the end of the song.";
     $("pr-end-text").textContent = wait
@@ -440,6 +516,27 @@ export class PracticeScreen {
     if (wait) this.celebrate($("pr-end-title"));
   }
 
+  _onPlayEnd(e) {
+    const sc = e.score;
+    this.banner.until = 0; // an old tip does not stay after the end
+    $("pr-end-title").textContent = sc.stars === 3 ? "Great playing!" : sc.stars === 2 ? "Good run!" : "You played to the end!";
+    $("pr-score-stars").textContent = "★".repeat(sc.stars) + "☆".repeat(3 - sc.stars);
+    $("pr-score-stars").setAttribute("aria-label", `${sc.stars} of 3 stars`);
+    $("pr-score-total").textContent = String(sc.total);
+    $("pr-score-acc").textContent = `${Math.round(sc.accuracy)}%`;
+    $("pr-score-time").textContent = `${Math.round(sc.timing)}%`;
+    $("pr-score-len").textContent = `${Math.round(sc.length)}%`;
+    $("pr-end-text").textContent = `You played ${sc.hit} of ${sc.notes} keys. ${sc.perfect + sc.good} were on time.`;
+    $("pr-end-goal").textContent = "";
+    $("pr-end-goal").className = "pr-end-goal";
+    $("pr-end-again").classList.remove("hidden");
+    $("pr-end-play").classList.add("hidden");
+    $("pr-end").classList.remove("hidden");
+    $("pr-start").classList.remove("primary");
+    $("pr-end-again").focus({ preventScroll: true });
+    if (sc.stars === 3) this.celebrate($("pr-end-title"));
+  }
+
   // The course result for this run (event "course"): is the song done, and what is still needed?
   _onResult(r) {
     this.lastResult = r;
@@ -455,12 +552,161 @@ export class PracticeScreen {
       if (!(r.required_hands || []).every((h) => (r.hands || []).includes(h))) {
         need.push(r.required_hands.length > 1 ? "play with both hands" : r.required_hands[0] === "L" ? "play with the left hand" : "play with the right hand");
       }
-      if ((r.accuracy || 0) < r.rule.score) need.push(`press ${r.rule.score}% of the keys right the first time`);
+      if (r.mode === "play") {
+        if ((r.score ? r.score.total : 0) < r.rule.score) need.push(`get ${r.rule.score} points or more`);
+      } else if (!r.wait_counts) {
+        need.length = 0;
+        need.push(r.keys_ok ? "now play along with the song (select \"Play along\")"
+          : `press ${r.rule.score}% of the keys right the first time, then play along with the song`);
+      } else if ((r.accuracy || 0) < r.rule.score) need.push(`press ${r.rule.score}% of the keys right the first time`);
       if (need.length) text = `To finish this song: ${need.join(", ")}.`;
     }
     el.textContent = text;
     el.className = `pr-end-goal ${kind}`;
     if (r.newly_done) this.celebrate($("pr-end-title"));
+    if (r.mode === "play") this._showAfterRun(r);
+  }
+
+  // ------------------------------------------------------------------ after a play-along run (PLAN 7.2, 7.3)
+
+  _showAfterRun(r) {
+    const words = (t) => (this.terms ? this.terms.markup(t) : esc(t));
+    const ad = r.adapt;
+    this.adapt = ad || null;
+    const box = $("pr-end-adapt");
+    $("pr-end-adapt-text").textContent = "";
+    if (ad) {
+      const parts = [];
+      if (ad.learned_text) parts.push(ad.learned_text);
+      if (ad.text) parts.push(ad.text);
+      $("pr-end-adapt-text").innerHTML = parts.map(words).join(" ");
+      const next = $("pr-end-next");
+      next.classList.toggle("hidden", ad.action !== "next");
+      if (ad.action === "next") {
+        next.textContent = { both: "Play with both hands", part: "Play the next part", whole: "Play the whole song",
+          song: "Select a new song" }[ad.next.id];
+      }
+      if (ad.action === "slower" || ad.action === "faster") {
+        this.opts.speed = ad.speed;
+        this._renderControls();
+      }
+      box.classList.remove("hidden");
+    }
+    this.findings = r.findings || [];
+    const list = $("pr-findings");
+    list.innerHTML = "";
+    if (!this.findings.length) {
+      list.classList.add("hidden");
+      return;
+    }
+    this.findings.forEach((f, i) => {
+      const card = document.createElement("div");
+      card.className = "pr-finding";
+      card.dataset.i = String(i);
+      card.innerHTML = `<div class="pr-finding-num">${i + 1}</div>
+        <div class="pr-finding-body${f.place ? " has-preview" : ""}"><p class="pr-finding-text">${words(f.text)}</p>
+        ${f.place ? `<canvas class="pr-preview" role="img" aria-label="A small picture of this place. Red notes are the keys to practice."></canvas>` : ""}
+        <div class="pr-finding-buttons">
+          ${f.place ? `<button class="btn btn-sm" data-act="show" data-i="${i}">Show me</button>` : ""}
+          ${f.action ? `<button class="btn btn-sm${i === 0 ? " primary" : ""}" data-act="do" data-i="${i}">${esc(f.action.label)}</button>` : ""}
+        </div></div>`;
+      list.appendChild(card);
+    });
+    list.classList.remove("hidden");
+    // Previews (wrong notes red), and Rule 1: the first place is shown on the falling notes.
+    this.previews = this.findings.map((f, i) => {
+      if (!f.place) return null;
+      const c = list.querySelector(`.pr-finding[data-i="${i}"] canvas`);
+      const v = new PreviewView(c, { song: this.song, place: f.place, hands: (this.lastEnd || {}).hands || this.opts.hands,
+        log: (this.lastEnd || {}).log, colors: { ...this.colors, keyWhite: cssVar("--white-key") } });
+      v.draw(); // at once (the card is in the page now), and again after the next layout
+      requestAnimationFrame(() => v.draw());
+      return v;
+    });
+    const first = this.findings.findIndex((f) => f.place);
+    if (first >= 0) this._focusFinding(first);
+  }
+
+  _focusFinding(i) {
+    const f = this.findings && this.findings[i];
+    if (!f || !f.place) return;
+    this.place = f.place;
+    this.peek = Math.max(0, f.place.start - 0.25);
+    for (const c of document.querySelectorAll(".pr-finding")) c.classList.toggle("is-shown", Number(c.dataset.i) === i);
+    this._applyView();
+  }
+
+  // "Show me": the app plays that place (Mac sound) and a line moves through the preview.
+  async _showMe(i) {
+    const f = this.findings[i];
+    const v = this.previews[i];
+    if (!f || !f.place || !v) return;
+    this._focusFinding(i);
+    if (!this.piano.started && this.startSound) await this.startSound().catch(() => {});
+    const rate = (this.song.bpm * Math.min(1, this.opts.speed)) / 60;
+    const now = this.piano.audioNow();
+    const hands = new Set(v.hands);
+    for (const n of this.song.notes) {
+      if (n.start < f.place.start - 1e-6 || n.start >= f.place.end - 1e-6 || !hands.has(n.hand)) continue;
+      this.piano.playAt(n.pitch, now + 0.05 + (n.start - f.place.start) / rate, (n.dur / rate) * 0.95, n.vel || 80);
+    }
+    const t0 = performance.now() + 50;
+    const total = ((f.place.end - f.place.start) / rate) * 1000;
+    const id = (this._showId = (this._showId || 0) + 1);
+    const step = () => {
+      if (id !== this._showId) return;
+      const k = Math.min(1, Math.max(0, (performance.now() - t0) / total));
+      v.playBeat = f.place.start + k * (f.place.end - f.place.start);
+      this.peek = v.playBeat - 0.25;
+      v.draw();
+      if (k < 1) requestAnimationFrame(step);
+      else { v.playBeat = null; v.draw(); }
+    };
+    requestAnimationFrame(step);
+  }
+
+  _findingButton(i, act) {
+    if (act === "show") return this._showMe(i);
+    const f = this.findings[i];
+    if (!f || !f.action) return;
+    const a = f.action;
+    const o = this.opts;
+    o.loop = null;
+    // An action with a place loops that place. An action with no place (slower, the click, one
+    // hand, both hands) keeps the current part or place.
+    if (a.span) { o.section = null; o.span = a.span; }
+    if (a.mode) o.mode = a.mode;
+    if (a.hands) o.hands = a.hands.filter((h) => this.handsPresent.includes(h));
+    if (typeof a.speed === "number") o.speed = a.speed;
+    if (a.id === "click") o.click = true;
+    if (a.id === "both_half" && o.hands.length < 2) o.hands = [...this.handsPresent];
+    $("pr-part").value = o.section === null ? "" : String(o.section);
+    if (a.span) this.place = { start: a.span[0], end: a.span[1] };
+    else if (!o.span) this.place = null;
+    this._saveOptions();
+    this._renderControls();
+    this._restartWith();
+  }
+
+  async _nextStep() {
+    const ad = this.adapt;
+    if (!ad || ad.action !== "next") return;
+    const n = ad.next;
+    if (n.id === "song") return this.onReturn(this.returnTo);
+    if (n.hands) this.opts.hands = n.hands.filter((h) => this.handsPresent.includes(h));
+    if (n.id === "part" || n.id === "whole") { this.opts.section = n.section; this.opts.span = null; }
+    $("pr-part").value = this.opts.section === null ? "" : String(this.opts.section);
+    this._renderControls();
+    this._restartWith();
+  }
+
+  async _restartWith() {
+    this._hideEnd();
+    if (this.ps && this.ps.song_id) {
+      try { this._onState(await this.api("/api/practice/stop", {})); } catch { /* start shows it */ }
+    }
+    this._applyView();
+    this.start();
   }
 
   // ------------------------------------------------------------------ skill moments (PLAN 8.2)
@@ -550,12 +796,15 @@ export class PracticeScreen {
   _hideEnd() {
     $("pr-end").classList.add("hidden");
     $("pr-start").classList.add("primary");
+    this._showId = (this._showId || 0) + 1;
   }
 
   _mark(kind, pitch) {
-    const other = kind === "wrong" ? "hit" : "wrong";
-    this.marks[other].delete(pitch);
-    this.kb.mark(pitch, other === "wrong" ? "wrong" : "hit", false);
+    for (const k of Object.keys(this.marks)) {
+      if (k === kind) continue;
+      this.marks[k].delete(pitch);
+      this.kb.mark(pitch, k, false);
+    }
     this.marks[kind].set(pitch, performance.now());
     this.kb.mark(pitch, kind, true);
     if (!this.down.has(pitch)) this._unmarkLater(kind, pitch);
@@ -588,6 +837,7 @@ export class PracticeScreen {
 
   _range() {
     const o = this.opts;
+    if (o.span) return [o.span[0], Math.min(o.span[1], this.song.end)];
     if (o.section !== null && this.song.sections[o.section]) {
       const s = this.song.sections[o.section];
       return [s.start, Math.min(s.end, this.song.end)];
@@ -596,6 +846,8 @@ export class PracticeScreen {
   }
 
   _beat() {
+    // After a run, the view can show the place of a finding (PLAN 7.4 Rule 1).
+    if (this.peek !== null && (!this.ps || this.ps.done)) return this.peek;
     if (this.ps) return this._beatOf(this.ps);
     const [start] = this._range();
     return start - (this.opts.countIn ? this.song.time_signature[0] : 0);
@@ -619,7 +871,10 @@ export class PracticeScreen {
     this.view = { mode, hands, range };
     this.renderer.setView({
       active: hands, stopBeats, stopIndex: ps ? ps.stop_index || 0 : 0, waiting: !!(ps && ps.waiting),
-      range, loop: ps ? ps.loop : this.opts.section !== null, countInTo: range[0],
+      range, loop: ps ? ps.loop : this.opts.section !== null || !!this.opts.span, countInTo: range[0],
+      place: this.place && (!ps || ps.done || !ps.loop) ? this.place : null,
+      stopBeat: ps && ps.paused && ps.pause_reason === "stopped" ? ps.stop_beat : null,
+      results: mode === "play" ? this.results : null,
     });
     // Notes that the app plays (Mac sound and key glow): watch = all; wait = the other hand.
     const accompany = ps ? ps.accompany : this.opts.accompany;
@@ -665,7 +920,8 @@ export class PracticeScreen {
     const group = this.song.time_signature[0];
     while (this.sched.click < clickLimit) {
       const k = this.sched.click;
-      const inCountIn = k < start - 1e-6;
+      const inCountIn = k < start - 1e-6 || (ps.lead_to !== null && ps.lead_to !== undefined && k < ps.lead_to - 1e-6
+        && k >= ps.lead_to - this.song.time_signature[0] - 1e-6); // the clicks before "Continue from here"
       if ((inCountIn && ps.count_in > 0) || (!inCountIn && this.opts.click)) {
         const accent = ((((k - start) % group) + group) % group) === 0;
         this.piano.clickAt(now + Math.max(0, (k - beat) / rate), accent);
@@ -767,8 +1023,8 @@ export class PracticeScreen {
     return `Press ${one}${together}.`;
   }
 
-  _say(text, ms) {
-    this.banner = { text, until: performance.now() + ms };
+  _say(text, ms, kind = "") {
+    this.banner = { text, until: performance.now() + ms, kind };
   }
 
   _updateBanner(beat, hint) {
@@ -779,13 +1035,15 @@ export class PracticeScreen {
     let kind = "";
     if (performance.now() < this.banner.until) {
       text = this.banner.text;
-      kind = text.startsWith("Not this key") ? "bad" : "";
+      kind = this.banner.kind || (text.startsWith("Not this key") ? "bad" : "");
     } else if (mode === "wait" && !st.connected) {
       text = "Connect your keyboard to play. You can select Watch to listen to the song.";
       kind = "warn";
     } else if (ps && ps.paused) {
       text = ps.pause_reason === "skill"
         ? "The song stopped for a new skill."
+        : ps.pause_reason === "stopped"
+        ? "You stopped. Continue from here? The dashed line shows the place. Click \"Continue from here\"."
         : ps.pause_reason === "hidden"
         ? "The song stopped because the window was not in front. Click Continue."
         : ps.pause_reason === "left"
@@ -800,11 +1058,14 @@ export class PracticeScreen {
       text = this._expectedText(ps.expected);
       kind = "go";
     } else if (ps && ps.running) {
-      text = mode === "wait" ? "Press each key when its note touches the line." : "Watch and listen. The app plays the song.";
+      text = mode === "wait" ? "Press each key when its note touches the line."
+        : mode === "play" ? "Press each key when its note touches the line. The song does not wait." : "Watch and listen. The app plays the song.";
     } else if (ps && ps.done) {
       text = "The song is at the end.";
     } else {
-      text = mode === "wait" ? "Click \"Start playing\". The song waits for you at each key." : "Click \"Start watching\". The app plays the song for you.";
+      text = mode === "wait" ? "Click \"Start playing\". The song waits for you at each key."
+        : mode === "play" ? "Click \"Start playing along\". The song goes on at its speed. You get points for each key."
+        : "Click \"Start watching\". The app plays the song for you.";
     }
     if (text !== this._bannerText || kind !== this._bannerKind) {
       this._bannerText = text;
@@ -835,6 +1096,7 @@ export class PracticeScreen {
       middleC: cssVar("--stage-middle-c"), line: cssVar("--accent"), bad: cssVar("--bad"),
       text: cssVar("--text"), band: cssVar("--stage-band"), bandEdge: cssVar("--accent"),
       waitRing: cssVar("--text"), barLine: cssVar("--stage-bar"),
+      placeBand: cssVar("--place-band"), placeEdge: cssVar("--place-edge"),
     };
     this.renderer.setColors(this.colors);
   }

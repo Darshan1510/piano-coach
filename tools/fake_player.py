@@ -31,6 +31,13 @@ Course and daily session (Phase 3b):
       # inside the song), end it, print the summary. Exit 1 if something fails.
   uv run tools/fake_player.py --basics http://127.0.0.1:8020
       # do all keyboard basics tasks (and the 10-note demo)
+Play-along (Phase 4):
+  uv run tools/fake_player.py --song all --mode play --follow http://127.0.0.1:8020
+      # play each built-in song along with the song clock, exact timing; print the score
+  uv run tools/fake_player.py --song ode-to-joy --mode play --follow URL --runs 3 \
+      --jitter-ms 150 --shift-ms -80 --slip-rate 0.1 --hard-bar 3 --seed 1
+      # with errors: random timing +-150 ms, all 80 ms early (rushing), 10% wrong neighbor keys,
+      # wrong keys in group of clicks 3; print the findings of each run
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
+import random
 import sys
 import time
 import urllib.parse
@@ -165,6 +174,115 @@ def play_song(fp: "FakePlayer", song: dict, hands=("R",), speed: float = 1.0) ->
         if delay > 0:
             time.sleep(delay)
         fp.note_on(pitch, vel) if on else fp.note_off(pitch)
+
+
+def play_plan(song: dict, hands=("R",), jitter_ms: float = 0.0, shift_ms: float = 0.0, slip_rate: float = 0.0,
+              hard_bar: int | None = None, seed: int = 0, start: float = 0.0, end: float | None = None) -> dict:
+    """Key events of a play-along player (Phase 4 acceptance 2), in song beats + a time offset.
+
+    Each note: press at its beat + shift_ms + a random value in [-jitter_ms, +jitter_ms], release
+    at 90% of its length (same offset). slip_rate: the note is played on a key 1 or 2 keys away
+    (not a key of a near note). hard_bar (1-based group of clicks): each note in it is played on a
+    key 5-7 keys away (a wrong key, not a slip). Returns {"events": [(beat, offset_s, on, pitch, vel)],
+    "slips": [note starts], "hard": n, "bar_len": beats}.
+    """
+    rng = random.Random(seed)
+    end = song["end"] if end is None else end
+    notes = [n for n in song_notes(song, hands) if start - 1e-6 <= n["start"] < end - 1e-6]
+    bpg = float(song["time_signature"][0])
+    events, slips, hard = [], [], 0
+    for n in notes:
+        off = (shift_ms + rng.uniform(-jitter_ms, jitter_ms)) / 1000.0
+        near = {m["pitch"] for m in notes if abs(m["start"] - n["start"]) <= 1.0}
+        pitch = n["pitch"]
+        bar = int(math.floor((n["start"] + 1e-6) / bpg)) + 1
+        if hard_bar is not None and bar == hard_bar:
+            choices = [n["pitch"] + d for d in (5, 6, 7, -5, -6, -7)
+                       if 36 <= n["pitch"] + d <= 96 and all(abs(n["pitch"] + d - q) > 2 for q in near)]
+            pitch = choices[0] if choices else n["pitch"] + 12
+            hard += 1
+        elif slip_rate and rng.random() < slip_rate:
+            choices = [n["pitch"] + d for d in (1, -1, 2, -2) if 36 <= n["pitch"] + d <= 96 and n["pitch"] + d not in near]
+            if choices:
+                pitch = rng.choice(choices)
+                slips.append(n["start"])
+        events.append([n["start"], off, 1, pitch, n.get("vel", 80)])
+        events.append([n["start"] + n["dur"] * 0.9, off, 0, pitch, 0])
+    return {"events": events, "slips": slips, "hard": hard, "bar_len": bpg}
+
+
+def timed_events(plan: dict, beat_time) -> list[tuple[float, int, int, int]]:
+    """(time, on, pitch, vel), sorted. A key that is pressed again is released just before."""
+    ev = sorted(((beat_time(b) + off, on, p, v) for b, off, on, p, v in plan["events"]), key=lambda e: (e[0], e[1]))
+    out, down = [], {}
+    for t, on, p, v in ev:
+        if on:
+            if p in down:  # still down from the note before: release it first
+                out.append((t - 0.001, 0, p, 0))
+            down[p] = t
+            out.append((t, 1, p, v))
+        elif p in down:
+            del down[p]
+            out.append((t, 0, p, 0))
+    return sorted(out, key=lambda e: (e[0], e[1]))
+
+
+async def follow_play(base: str, fp: "FakePlayer", song_id: str, hands=("R",), speed: float = 1.0,
+                      plan_kw: dict | None = None, timeout: float = 300.0, section=None) -> dict:
+    """Play-along with the running app: start the run, read the song clock (anchor), press each
+    key at its time (perf_counter: same clock as the app on this Mac). Returns the score, the
+    findings and the automatic speed change of the "course" event."""
+    import websockets
+
+    song = load_song(song_id, base)
+    ws_url = base.replace("http://", "ws://") + "/ws"
+    async with websockets.connect(ws_url) as ws:
+        st = _post(base, "/api/practice/start", {"song_id": song_id, "mode": "play", "hands": list(hands),
+                                                 "speed": speed, "count_in": True, "accompany": False,
+                                                 "section": section, "loop": False})
+        run = st["run"]
+        rng = st["range"]
+        plan = play_plan(song, hands, start=rng[0], end=rng[1], **(plan_kw or {}))
+        at, ab, rate = st["anchor_t"], st["anchor_beat"], st["rate"]
+        events = timed_events(plan, lambda b: at + (b - ab) / rate)
+        end = course = None
+        tips, hits, wrongs = [], 0, 0
+
+        async def reader():
+            nonlocal end, course, hits, wrongs
+            while course is None:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout))
+                k = msg.get("type")
+                if msg.get("run") not in (None, run) or msg.get("song_id") not in (None, song_id):
+                    continue
+                if k == "practice_end":
+                    end = msg
+                elif k == "course" and msg.get("event") == "run":
+                    course = msg
+                elif k == "practice_tip":
+                    tips.append(msg["text"])
+                elif k == "practice_hit":
+                    hits += 1
+                elif k == "practice_wrong":
+                    wrongs += 1
+
+        task = asyncio.create_task(reader())
+        for t, on, p, v in events:
+            delay = t - time.perf_counter()
+            if delay > 0.002:
+                await asyncio.sleep(delay - 0.002)
+            while time.perf_counter() < t:
+                pass
+            fp.note_on(p, v) if on else fp.note_off(p)
+        await asyncio.wait_for(task, timeout)
+    sc = end["score"]
+    return {"song": song_id, "score": sc["total"], "stars": sc["stars"], "accuracy": sc["accuracy"],
+            "timing": sc["timing"], "length": sc["length"], "perfect": sc["perfect"], "missed": sc["missed"],
+            "slips_found": sc["slips"], "slips_sent": len(plan["slips"]), "mean_err_ms": sc["mean_err_ms"],
+            "findings": [f["id"] for f in course.get("findings") or []], "all_findings": course.get("all_findings"),
+            "hard_bar_found": next((f["data"]["bar"] for f in course.get("findings") or [] if f["id"] == "hard_spot"), None),
+            "adapt": (course.get("adapt") or {}).get("action"), "adapt_speed": (course.get("adapt") or {}).get("speed"),
+            "tips": tips, "hits": hits, "wrong_events": wrongs, "done": course.get("done")}
 
 
 def _post(base: str, path: str, body: dict) -> dict:
@@ -400,10 +518,18 @@ async def run_session(base: str, fp: "FakePlayer", minutes: int = 10, wrong: int
             elif b["kind"] == "song":
                 runs = []
                 for step in b["steps"]:
+                    if step.get("mode") == "play":  # Phase 4: the keys are learned: play along
+                        r = await follow_play(base, fp, b["song_id"], b["hands"], step["speed"] or 1.0,
+                                              section=step["section"])
+                        runs.append({"section": step["section"], "mode": "play", "score": r["score"], "done": r["done"]})
+                        continue
                     r = await play_practice(link, b["song_id"], b["hands"], step["section"], step["speed"] or 1.0)
                     runs.append({"section": step["section"], "accuracy": r["end"].get("accuracy"),
                                  "done": r["course"]["done"], "skills": r["skills"]})
                 info.update(song=b["song_id"], runs=runs)
+            elif b.get("mode") == "play":
+                r = await follow_play(base, fp, b["song_id"], b["hands"], 1.0, section=b["section"])
+                info.update(song=b["song_id"], section=b["section"], mode="play", score=r["score"])
             else:
                 r = await play_practice(link, b["song_id"], b["hands"], b["section"], 1.0)
                 info.update(song=b["song_id"], section=b["section"], accuracy=r["end"].get("accuracy"))
@@ -441,6 +567,25 @@ async def autoplay(base: str, fp: "FakePlayer", until: float, wrong: int = 0) ->
     return {"presses": player.presses, "wrong_pressed": player.wrong_pressed}
 
 
+def run_tap(base: str, fp: "FakePlayer", shift_ms: float, jitter_ms: float, seed: int) -> dict:
+    """Latency calibration ("tap with the click"): press a key at each click time + shift_ms
+    (+- jitter_ms), then ask the app for the result (Phase 4 review fix 4)."""
+    import random
+
+    rnd = random.Random(seed)
+    plan = _post(base, "/api/settings/latency/start", {})
+    for k in plan["clicks"]:
+        t = k + shift_ms / 1000.0 + rnd.uniform(-jitter_ms, jitter_ms) / 1000.0
+        while time.perf_counter() < t:
+            time.sleep(min(0.002, max(0.0, t - time.perf_counter())))
+        fp.note_on(60, 80)
+        time.sleep(0.1)
+        fp.note_off(60)
+    while time.perf_counter() < plan["end"] + 0.1:
+        time.sleep(0.01)
+    return _post(base, "/api/settings/latency/finish", {})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--name", default=PORT_NAME, help="virtual port name")
@@ -465,7 +610,30 @@ def main() -> None:
     ap.add_argument("--session", metavar="URL", help="run a whole daily session in the app at URL")
     ap.add_argument("--minutes", type=int, default=10, help="with --session: 10, 15, 20 or 30")
     ap.add_argument("--basics", metavar="URL", help="do the keyboard basics in the app at URL")
+    ap.add_argument("--mode", choices=("wait", "play"), default="wait", help="with --follow: wait mode or play-along")
+    ap.add_argument("--runs", type=int, default=1, help="with --mode play: runs of each song")
+    ap.add_argument("--jitter-ms", type=float, default=0.0, help="play-along: random timing error +- this")
+    ap.add_argument("--shift-ms", type=float, default=0.0, help="play-along: all keys this early (-) or late (+)")
+    ap.add_argument("--slip-rate", type=float, default=0.0, help="play-along: share of notes on a neighbor key")
+    ap.add_argument("--hard-bar", type=int, help="play-along: wrong keys in this group of clicks (1 = first)")
+    ap.add_argument("--seed", type=int, default=0, help="play-along: random seed (each run adds 1)")
+    ap.add_argument("--tap", metavar="URL", help="do the latency check (tap with the click) in the app at URL; "
+                                                 "uses --shift-ms and --jitter-ms")
     args = ap.parse_args()
+
+    if args.tap:
+        sys.path.insert(0, str(ROOT))
+        from tools.measure_latency import wait_connected
+
+        with FakePlayer(args.name, shift=args.shift, channel=args.channel - 1, vel0_note_off=not args.note_off) as fp:
+            print(f"Virtual port '{args.name}' is open.", flush=True)
+            wait_connected(args.tap, args.name)
+            r = run_tap(args.tap, fp, args.shift_ms, args.jitter_ms, args.seed)
+            print(json.dumps(r), flush=True)
+            time.sleep(args.hold)
+        if not r.get("ok"):
+            raise SystemExit(1)
+        return
 
     if args.autoplay or args.session or args.basics:
         base = args.autoplay or args.session or args.basics
@@ -529,8 +697,22 @@ def play_songs(args) -> None:
                 ids = [s["id"] for s in json.loads(res.read())["songs"] if s.get("source") == "midi"]
         else:
             ids = [load_song(args.song, args.follow)["id"]]
-        speed = args.speed if args.speed != 1.0 else 1.5
         failed = 0
+        if args.mode == "play":
+            for sid in ids:
+                for k in range(args.runs):
+                    kw = {"jitter_ms": args.jitter_ms, "shift_ms": args.shift_ms, "slip_rate": args.slip_rate,
+                          "hard_bar": args.hard_bar, "seed": args.seed + k}
+                    r = asyncio.run(follow_play(args.follow, fp, sid, hands, args.speed, kw))
+                    exact = not (args.jitter_ms or args.shift_ms or args.slip_rate or args.hard_bar)
+                    ok = r["score"] >= 98 if exact else True
+                    failed += not ok
+                    print(("PASS " if ok else "FAIL ") + json.dumps(r), flush=True)
+                    time.sleep(0.3)
+            if failed:
+                raise SystemExit(1)
+            return
+        speed = args.speed if args.speed != 1.0 else 1.5
         for sid in ids:
             r = asyncio.run(follow_wait(args.follow, fp, sid, hands, speed, args.wrong))
             ok = r["completed"] and r["advanced_on_wrong"] == 0 and r["wrong_events"] == args.wrong

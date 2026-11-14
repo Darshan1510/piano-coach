@@ -66,9 +66,19 @@ export class Piano {
     this.sampler.triggerAttackRelease(midiToToneName(pitch), Math.max(0.05, seconds), when, velocity / 127);
   }
 
-  // The click (metronome). A higher, louder click on the first of each group.
+  // The delay of the sound output (seconds), when the browser gives it (AudioContext.outputLatency;
+  // Tone.js 15 does not wrap it). 0 when unknown or not sane.
+  outputLatency() {
+    const raw = window.Tone && Tone.context ? Tone.context.rawContext : null;
+    const v = raw && typeof raw.outputLatency === "number" ? raw.outputLatency : 0;
+    return v > 0 && v < 0.5 ? v : 0;
+  }
+
+  // The click (metronome). A higher, louder click on the first of each group. The click starts
+  // outputLatency() early, so that the user hears it at `when` (PLAN 4 Timing).
   clickAt(when, accent = false) {
     if (!this.running) return;
+    when = Math.max(this.audioNow(), when - this.outputLatency());
     if (!this.click) {
       this.click = new Tone.Synth({
         oscillator: { type: "triangle" },

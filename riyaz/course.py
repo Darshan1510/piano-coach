@@ -7,8 +7,9 @@ song_progress.
 Rules:
 - Level = the first level (from the level floor) that is not done. A level is done when all its
   songs are done. "Skip to this level" sets the level floor (PLAN 8.3: skip forward, with a warning).
-- Song done = song_done(): 100% speed, wait-mode score >= 80, the whole song, the ladder hands.
-  Phase 3 has no play-along score (Phase 4); the score is the wait-mode accuracy (DECISIONS.md).
+- Song done = song_done(): 100% speed, score >= 80, the whole song, the ladder hands. The score is
+  the play-along score (Phase 4). Level 1 songs can also be done with a wait-mode run (% of keys
+  right the first time >= 80): the user is a beginner (DECISIONS.md Phase 4).
 - A skill moment unlocks its term (PLAN 8.2, 7.4). Keyboard basics tasks unlock "middle C" and
   "finger number".
 """
@@ -192,14 +193,37 @@ def ladder_entry(song_id: str) -> dict | None:
     return next((e for e in ladder_entries() if e["song_id"] == song_id), None)
 
 
-def song_done(run: dict, required_hands) -> bool:
-    """PLAN 8.3 "song done": 100% speed and a score of 80 or more.
+def run_score(run: dict) -> float:
+    """The score of a run for the song-done rule: play-along total, or the wait-mode accuracy."""
+    if run.get("mode") == "play":
+        sc = run.get("score")
+        return float(sc.get("total") or 0) if isinstance(sc, dict) else float(sc or 0)
+    return float(run.get("accuracy") or 0)
 
-    Phase 3: the score is the wait-mode accuracy (first-try correct stops, %). Phase 4 replaces
-    this with the play-along score (DECISIONS.md, Phase 3b).
+
+def song_done(run: dict, required_hands, level: int | None = None) -> bool:
+    """PLAN 8.3 "song done": the whole song at 100% speed with a score of 80 or more.
+
+    Play-along: the score is the 0-100 total. Wait mode counts only for songs of level
+    WAIT_DONE_MAX_LEVEL or lower (Level 1: learn the keys first; from Level 2 "Keep the beat" the
+    timing counts). level None = not a ladder song: play-along only.
     """
-    return (run.get("mode") == "wait" and bool(run.get("completed")) and run.get("section") is None
+    mode = run.get("mode")
+    if mode == "wait":
+        if level is None or level > config.WAIT_DONE_MAX_LEVEL:
+            return False
+    elif mode != "play":
+        return False
+    return (bool(run.get("completed")) and run.get("section") is None and not run.get("span")
             and float(run.get("speed", 0)) >= config.SONG_DONE_SPEED - EPS
+            and set(required_hands) <= set(run.get("hands") or [])
+            and run_score(run) >= config.SONG_DONE_SCORE - EPS)
+
+
+def keys_learned(run: dict, required_hands) -> bool:
+    """Step 1 of a song: a wait-mode run that passes the song-done numbers (then: play along)."""
+    return (run.get("mode") == "wait" and bool(run.get("completed")) and run.get("section") is None
+            and not run.get("span") and float(run.get("speed", 0)) >= config.SONG_DONE_SPEED - EPS
             and set(required_hands) <= set(run.get("hands") or [])
             and float(run.get("accuracy") or 0) >= config.SONG_DONE_SCORE - EPS)
 
@@ -365,15 +389,19 @@ class Course:
     # ---- song runs
 
     def record_run(self, run: dict, session_id: int | None = None, day: str | None = None) -> dict | None:
-        """A wait-mode run ended (practice_end). Records the attempt and the song progress."""
-        if run.get("mode") != "wait":
+        """A wait-mode or play-along run ended (practice_end). Records the attempt and the song
+        progress; a learned song (PLAN 7.3) starts its spaced repetition (riyaz/review.py)."""
+        from . import feedback, review
+
+        mode = run.get("mode")
+        if mode not in ("wait", "play"):
             return None
         song = get_song(str(run.get("song_id", "")))
         if song is None:
             return None
         entry = ladder_entry(song["id"])
         required = entry["hands"] if entry else songs.hands_of(song)
-        full = run.get("section") is None
+        full = run.get("section") is None and not run.get("span")
         part_errors: dict[int, int] = {}
         for e in run.get("errors") or []:
             p = part_of(song, float(e.get("beat") or 0))
@@ -384,23 +412,53 @@ class Course:
                 part_errors.setdefault(i, 0)
         elif isinstance(run.get("section"), int):
             part_errors.setdefault(run["section"], 0)
+        day = day or today()
         level_before = self.level()
-        done = song_done(run, required) if song.get("source") != "course" else False
+        level_of_song = entry["level"] if entry else None
+        course_song = song.get("source") == "course"
+        done = song_done(run, required, level_of_song) if not course_song else False
         accuracy = run.get("accuracy")
-        self.store.add_attempt(kind="song", item=song["id"], day=day or today(), t=self.now(), session_id=session_id,
+        score = run.get("score") if mode == "play" and isinstance(run.get("score"), dict) else None
+        data = {"part_errors": part_errors, "seconds": run.get("seconds"), "mode": mode,
+                "range": run.get("range"), "span": run.get("span")}
+        if run.get("loop_pass"):
+            data["loop_pass"] = True  # not in the run history, findings, adapt or the Progress chart
+        if score is not None:
+            data.update(score=score, **feedback.run_summary(song, run))
+        self.store.add_attempt(kind="song", item=song["id"], day=day, t=self.now(), session_id=session_id,
                                hands=run.get("hands"), section=run.get("section"), speed=run.get("speed"),
                                completed=bool(run.get("completed")), stops=run.get("stops"), wrong=run.get("wrong"),
-                               accuracy=accuracy, data={"part_errors": part_errors, "seconds": run.get("seconds")})
+                               accuracy=accuracy, data=data)
+        if run.get("loop_pass"):
+            return None  # one pass of a repeated part: the attempt only (skill model, history)
         before = self.store.song_progress(song["id"]).get(song["id"])
-        row = self.store.update_song_progress(song["id"], accuracy=accuracy, full=full and bool(run.get("completed")),
-                                              done=done, part_errors=part_errors, t=self.now())
+        row = self.store.update_song_progress(
+            song["id"], accuracy=accuracy, full=full and bool(run.get("completed")), done=done,
+            part_errors=part_errors, t=self.now(),
+            score=score["total"] if score is not None and full and run.get("completed") else None,
+            keys_ok=not course_song and keys_learned(run, required))
+        # Learned (PLAN 7.3): whole song at 100% with >= 85 (play-along): schedule the reviews.
+        learned_new = False
+        if (score is not None and done and score["total"] >= config.LEARNED_SCORE - EPS
+                and self.store.mark_learned(song["id"], self.now())):
+            learned_new = True
+            review.add_song(self.store, song, day)
+        # A review counts only at 100% speed (or faster) with the ladder hands (the review block's
+        # settings); a slow or one-hand run of a learned song does not change the schedule.
+        review_ok = (score is not None and float(run.get("speed") or 0) >= config.SONG_DONE_SPEED - EPS
+                     and set(required) <= set(run.get("hands") or []))
+        reviews = review.record_sections(self.store, song["id"], data.get("section_scores") or {}, day) \
+            if review_ok else []
         level_after = self.level()
         return {"song_id": song["id"], "title": song["title"], "ladder": entry is not None,
                 "level_of_song": entry["level"] if entry else song.get("level"), "accuracy": accuracy,
                 "speed": run.get("speed"), "full": full, "hands": run.get("hands"), "required_hands": required,
                 "done": row["done"], "newly_done": row["done"] and not (before or {}).get("done", False),
                 "level_before": level_before, "level": level_after,
-                "level_up": level_after > level_before, "rule": rule()}
+                "level_up": level_after > level_before, "rule": rule(), "mode": mode,
+                "score": score, "keys_ok": bool(row.get("keys_ok")), "learned": learned_new,
+                "wait_counts": level_of_song is not None and level_of_song <= config.WAIT_DONE_MAX_LEVEL,
+                "reviewed": [r["item"] for r in reviews]}
 
     # ---- the whole state for the UI
 
@@ -431,6 +489,8 @@ class Course:
                 items.append({"song_id": e["song_id"], "title": s["title"], "hands": e["hands"],
                               "seconds": round(s["end"] * 60.0 / s["bpm"]), "done": e["song_id"] in done,
                               "best": p.get("best_full"), "runs": p.get("runs", 0),
+                              "best_score": p.get("best_score"), "keys_ok": bool(p.get("keys_ok")),
+                              "learned": bool(p.get("learned")),
                               "current": bool(cur and cur["song_id"] == e["song_id"]),
                               "skills": [{"id": sk["id"], "name": self.skill(sk["id"])["name"],
                                           "done": sk["id"] in skills_done} for sk in e["skills"]]})
@@ -455,7 +515,8 @@ class Course:
 
 
 def rule() -> dict:
-    return {"speed": round(config.SONG_DONE_SPEED * 100), "score": config.SONG_DONE_SCORE}
+    return {"speed": round(config.SONG_DONE_SPEED * 100), "score": config.SONG_DONE_SCORE,
+            "wait_max_level": config.WAIT_DONE_MAX_LEVEL}
 
 
 def today() -> str:

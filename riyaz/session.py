@@ -6,9 +6,12 @@ Daily session (default 20 minutes; 10, 15, 20 or 30): 4 blocks.
 - Song 60%: the current ladder song (or the imported song that the user selected). The hardest
   part first (from the error data, if there is any), then the whole song. Skill moments come
   inside the song (riyaz/practice.py breaks).
-- Review 15%: spaced repetition is Phase 4. For now: one part of a done song (the song played
-  least recently; its part with the most errors). Without a done song: a part of the current song.
+- Review 15%: the spaced-repetition item that is due (riyaz/review.py), played along. Without a due
+  item: one part of a done song (the song played least recently; its part with the most errors).
+  Without a done song: a part of the current song.
 - Intuition 15%: the exercises of PLAN 10 are Phase 5. For now: "Find the key" (Level 1+).
+- The weakest skill (riyaz/skills.py) picks the hands of the warm-up and the focus of the
+  intuition exercise (Phase 4 has one exercise: "Find the key").
 
 Practice time: the time between 2 key presses counts when it is shorter than ACTIVITY_GAP_S.
 A day counts for the streak with PRACTICE_DAY_SECONDS of practice or a finished session.
@@ -25,7 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from . import config, songs
+from . import config, review, skills, songs
 from .course import Course, get_song, ladder_entry, today
 from .db import Store
 
@@ -259,7 +262,8 @@ def warmup_pattern(song: dict, hands: list[str], part: int | None, n: int = conf
             "hand_positions": positions, "song_id": song["id"]}
 
 
-def plan(store: Store, course: Course, minutes: int | None = None, song_id: str | None = None) -> dict:
+def plan(store: Store, course: Course, minutes: int | None = None, song_id: str | None = None,
+         day: str | None = None) -> dict:
     """The plan for today's session (it does not start the session)."""
     settings = habit_settings(store)
     minutes = minutes if minutes in config.SESSION_MINUTES else settings["session_minutes"]
@@ -282,16 +286,36 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
     hard = hardest_part(progress.get(song["id"]))
     mins = block_minutes(minutes)
 
-    warm = warmup_pattern(song, hands, hard)
+    # The weakest skill picks the warm-up hands (PLAN 9.4).
+    choices = ["keys", "rhythm"] + [k for h, k in (("R", "right"), ("L", "left")) if h in hands]
+    if set(hands) >= {"R", "L"}:
+        choices.append("coordination")
+    focus = skills.weakest(store, choices)
+    warm_hands = {"right": ["R"], "left": ["L"]}.get(focus, hands)
+    warm = warmup_pattern(song, warm_hands, hard)
+    # Wait mode first; when the keys are learned (step 1), the whole song is played along.
+    keys_ok = bool((progress.get(song["id"]) or {}).get("keys_ok"))
     song_steps = []
     if hard is not None:
-        song_steps.append({"section": hard, "speed": 0.6, "label": "hard_part"})
-    song_steps.append({"section": None, "speed": None, "label": "whole"})
+        song_steps.append({"section": hard, "speed": 0.6, "label": "hard_part", "mode": "wait"})
+    song_steps.append({"section": None, "speed": None, "label": "whole", "mode": "play" if keys_ok else "wait"})
 
     # Review: a done song (not today's song), the one played least recently; its hardest part.
     done = [(r.get("last_played") or 0, sid2) for sid2, r in progress.items() if r["done"] and sid2 != song["id"]
             and get_song(sid2) is not None]
-    if done:
+    due = [r for r in review.due(store, day or today(), "section")
+           if get_song(r["song_id"]) is not None and r["song_id"] != song["id"]]
+    review_mode = "wait"
+    review_due = None
+    if due:
+        r = due[0]
+        review_song = get_song(r["song_id"])
+        review_part = r["section"] if review_song.get("sections") and r["section"] < len(review_song["sections"]) else None
+        review_hands = _hands_for(review_song, ladder_entry(review_song["id"]), level)
+        review_why = "due"
+        review_mode = "play"
+        review_due = r["due"]
+    elif done:
         review_id = min(done)[1]
         review_song = get_song(review_id)
         review_part = hardest_part(progress.get(review_id))
@@ -306,18 +330,20 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
         review_why = "current_song"
     if not review_song.get("sections"):
         review_part = None
+    ifocus = skills.weakest(store, ["keys", "ear"]) or "keys"
 
     blocks = [
         {"kind": "warmup", "minutes": mins["warmup"], "song_id": song["id"], "title": song["title"],
          "drill": {"kind": "steps", "id": f"warmup:{song['id']}", "steps": warm["steps"], "tries": 3,
                    "source": "warmup", "ref": song["id"]},
-         "pattern": warm},
+         "pattern": warm, "focus": focus, "hands": warm_hands},
         {"kind": "song", "minutes": mins["song"], "song_id": song["id"], "title": song["title"], "hands": hands,
          "steps": song_steps, "hard_part": hard, "level": entry["level"] if entry else song.get("level"),
          "ladder": entry is not None},
         {"kind": "review", "minutes": mins["review"], "song_id": review_song["id"], "title": review_song["title"],
-         "hands": review_hands, "section": review_part, "why": review_why},
-        {"kind": "intuition", "minutes": mins["intuition"], "exercise": "find_key",
+         "hands": review_hands, "section": review_part, "why": review_why, "mode": review_mode,
+         "due": review_due},
+        {"kind": "intuition", "minutes": mins["intuition"], "exercise": "find_key", "focus": ifocus,
          "drill": {"kind": "find_key", "id": "find_key", "rounds": config.FIND_KEY_ROUNDS, "source": "find_key"}},
     ]
     return {"minutes": minutes, "level": level, "blocks": blocks, "song_id": song["id"]}
@@ -376,7 +402,7 @@ class Sessions:
             if open_ is not None and self.active_id is None:
                 self.active_id = open_["id"]
                 self.activity.set_session(open_["id"], d)
-        return {"day": d, "plan": open_["plan"] if open_ else plan(self.store, self.course),
+        return {"day": d, "plan": open_["plan"] if open_ else plan(self.store, self.course, day=d),
                 "session": _public(open_) if open_ else None,
                 "finished": [_public(s) for s in list_ if s["ended"] is not None],
                 "habit": self.habit()}
@@ -388,7 +414,7 @@ class Sessions:
             for s in self.store.sessions_on(d):
                 if s["ended"] is None:  # one open session at a time: close the old one
                     self.store.update_session(s["id"], ended=self.now())
-            p = plan(self.store, self.course, minutes)
+            p = plan(self.store, self.course, minutes, day=d)
             sid = self.store.add_session(d, p["minutes"], p, self.now())
             self.store.update_session(sid, blocks=[{"status": "todo"} for _ in p["blocks"]])
             self.active_id = sid
@@ -402,7 +428,7 @@ class Sessions:
         with self._lock:
             s = self._open(session_id)
             if not isinstance(index, int) or not 0 <= index < len(s["plan"]["blocks"]):
-                raise SessionError("The app cannot find this part of the practice.")
+                raise SessionError("The app cannot find this step of the practice.")
             if status not in ("done", "skipped", "active"):
                 raise SessionError("The app does not know this choice.")
             blocks = s["blocks"] or [{"status": "todo"} for _ in s["plan"]["blocks"]]

@@ -411,21 +411,31 @@ def test_practice_end_has_accuracy():
     assert end["section"] is None and len(end["errors"]) == 3 and end["errors"][0]["beat"] == 0.0
 
 
-def run_evt(song_id, hands, accuracy=100.0, speed=1.0, section=None):
-    return {"type": "practice_end", "song_id": song_id, "mode": "wait", "completed": True, "hands": hands, "wrong": 0,
-            "stops": 30, "accuracy": accuracy, "speed": speed, "section": section, "seconds": 20.0,
-            "errors": [{"beat": 17.0, "pitch": 70}] if accuracy < 100 else []}
+def run_evt(song_id, hands, accuracy=100.0, speed=1.0, section=None, mode="wait"):
+    evt = {"type": "practice_end", "song_id": song_id, "mode": mode, "completed": True, "hands": hands, "wrong": 0,
+           "stops": 30, "accuracy": accuracy, "speed": speed, "section": section, "seconds": 20.0,
+           "errors": [{"beat": 17.0, "pitch": 70}] if accuracy < 100 else []}
+    if mode == "play":  # a play-along run: the score is the total (here = accuracy)
+        evt["score"] = {"total": int(accuracy), "accuracy": accuracy, "timing": 100.0, "length": 100.0, "stars": 3}
+    return evt
 
 
 def test_song_done_rule():
-    ok = run_evt("x", ["R"], 80.0)
-    assert song_done(ok, ["R"])
-    assert not song_done({**ok, "accuracy": 79.9}, ["R"])
+    """Phase 4 (PLAN 8.3): play-along score >= 80 at 100%, whole song, ladder hands. A wait-mode run
+    counts only for Level 1 songs (DECISIONS.md Phase 4)."""
+    ok = run_evt("x", ["R"], 80.0, mode="play")
+    assert song_done(ok, ["R"]) and song_done(ok, ["R"], 3)
+    assert not song_done({**ok, "score": {"total": 79}}, ["R"])
     assert not song_done({**ok, "speed": 0.95}, ["R"])
     assert not song_done({**ok, "section": 0}, ["R"])
+    assert not song_done({**ok, "span": [0, 4]}, ["R"])
     assert not song_done({**ok, "mode": "watch"}, ["R"])
     assert not song_done(ok, ["R", "L"])
     assert song_done({**ok, "hands": ["R", "L"]}, ["R"])
+    wait = run_evt("x", ["R"], 80.0)
+    assert song_done(wait, ["R"], 1)  # Level 1: wait mode counts
+    assert not song_done(wait, ["R"], 2) and not song_done(wait, ["R"])  # Level 2+ and imported: play-along
+    assert not song_done({**wait, "accuracy": 79.9}, ["R"], 1)
 
 
 def test_level_1_to_2_to_3_and_bar_lines_only_at_level_3(client):
@@ -440,6 +450,8 @@ def test_level_1_to_2_to_3_and_bar_lines_only_at_level_3(client):
     hub.publish = lambda e: (published.append(e), orig(e))
 
     def run(sid, hands, **kw):
+        level = course.ladder_entry(sid)["level"]
+        kw.setdefault("mode", "wait" if level == 1 else "play")
         c.riyaz["practice"].sink(run_evt(sid, hands, **kw))
         c.riyaz["flush_results"]()  # the result is saved on the results thread
         return [e for e in published if e.get("type") == "course"][-1]
@@ -460,6 +472,8 @@ def test_level_1_to_2_to_3_and_bar_lines_only_at_level_3(client):
     assert st["level"] == 2 and st["levels"][0]["done"] and st["bar_lines"] is False
     # Imported-song cards use the real level now (not a setting).
     assert c.get("/api/songs").json()["user_level"] == 2
+    r = run("au-clair-de-la-lune", ["R"], mode="wait")  # Level 2: wait mode = step 1 only (keys learned)
+    assert not r["done"] and r["keys_ok"] and not r["wait_counts"]
     for sid in ("au-clair-de-la-lune", "frere-jacques", "london-bridge"):
         r = run(sid, ["R"])
     assert r["level_up"] and r["level"] == 3
@@ -657,7 +671,7 @@ def test_daily_session_end_to_end_with_fake_keys(client):
 
 def test_song_done_needs_100_percent_not_more():
     """The rule is "100% speed": faster also counts (speed >= 100%)."""
-    assert song_done(run_evt("x", ["R"], speed=1.5), ["R"])
+    assert song_done(run_evt("x", ["R"], speed=1.5, mode="play"), ["R"])
 
 
 # ---------------------------------------------------------------------- streak, calendar, practice time

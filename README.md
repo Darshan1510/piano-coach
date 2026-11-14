@@ -9,10 +9,14 @@ Phase 2: 6 built-in songs (Levels 1-2), falling notes with finger numbers and a 
 outline, Watch and Play (wait) modes, hands, speed, the click, count-in and "Repeat a part".
 Phase 3a: MIDI file import (Songs → "Import a song") with track choice, hand split,
 automatic fingering, chords, key and a difficulty check on each imported song card.
-Phase 3b (this version): Today (a daily session: warm-up, song, review, "Find the key", with a
+Phase 3b: Today (a daily session: warm-up, song, review, "Find the key", with a
 timer and an end summary), Learn (keyboard basics and the song ladder, Levels 1-3, with skill
 moments inside the songs), Words (the music words that you learned), streak with a weekly
 streak freeze, daily goal, practice calendar and an optional Mac reminder (Settings).
+Phase 4 (this version): "Play along" (the song does not wait; points, stars, green/yellow/red keys,
+one tip at a time), "Continue from here" when you stop, after-run findings with a small picture
+of the place, "Show me" and a practice button, automatic speed changes, spaced repetition of
+learned song parts, a skill model, and the Progress page (skills, calendar, results over time).
 See `PLAN.md` and `PROGRESS.md`.
 
 ## Install (release build)
@@ -94,6 +98,17 @@ uv run tools/fake_player.py --basics  http://127.0.0.1:8020            # do the 
 uv run tools/fake_player.py --session http://127.0.0.1:8020 --minutes 10   # a whole daily session
 uv run tools/fake_player.py --autoplay http://127.0.0.1:8020 --until 600   # play what the window asks for
 ```
+
+Play-along (the app must run):
+
+```sh
+uv run tools/fake_player.py --song all --mode play --follow http://127.0.0.1:8020   # exact timing: >= 98 points
+uv run tools/fake_player.py --song twinkle-twinkle --mode play --follow http://127.0.0.1:8020 \
+    --runs 3 --jitter-ms 150 --shift-ms -80 --slip-rate 0.1 --hard-bar 3 --seed 1   # errors -> findings
+```
+
+With a real keyboard connected, test with the fake port only: start the app with
+`RIYAZ_PORT_FILTER="Riyaz Fake Keyboard"` and `RIYAZ_DATA_DIR=<a temp folder>`.
 
 Progress (sessions, song results, course, words, practice time) is in
 `~/Library/Application Support/Riyaz/riyaz.sqlite3`.

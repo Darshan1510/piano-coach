@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse
 
-from . import clock, config, course as course_mod, session as session_mod, songs
+from . import clock, config, course as course_mod, feedback, review, session as session_mod, skills as skills_mod, songs
 from .course import Course, CourseError
 from .db import Store
 from .drill import Drill, DrillError
@@ -26,6 +26,8 @@ from .importers import midi_import
 from .midi_io import MidiService
 from .practice import Practice, PracticeError, clamp_speed
 from .session import Activity, Reminder, SessionError, Sessions
+from .tapcheck import TapCheck
+from . import tapcheck as tapcheck_mod
 
 log = logging.getLogger("riyaz.server")
 
@@ -159,8 +161,12 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             hub.publish(evt)
             if evt.get("type") == "practice_end":
                 results.submit(on_practice_end, evt)
+            elif evt.get("type") == "practice_pass":
+                results.submit(on_practice_pass, evt)
 
         practice = Practice(practice_sink)
+        practice.input_offset_s = tapcheck_mod.offset_ms(store) / 1000.0  # latency calibration
+        tapcheck = TapCheck(hub.publish)
 
         def vel_split() -> int:
             vr = (state["midi"].calibration() or {}).get("velocity_range") if "midi" in state else None
@@ -172,13 +178,14 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             hub.publish(evt)  # the UI gets the key first (live keyboard)
             practice.on_midi(evt)  # then the wait-mode matcher (it can send practice events)
             drill.on_midi(evt)  # then the drill (keyboard basics, skill moments, "Find the key")
+            tapcheck.on_midi(evt)  # then the latency check ("tap with the click")
             if evt.get("type") == "note_on" and evt.get("reason") is None:
                 activity.press()
 
         midi = MidiService(store, sink=sink, poll_interval=poll_interval)
         practice.midi = midi
         midi.echo_filter = practice.echo.is_echo  # song notes sent to the keyboard that come back
-        state.update(midi=midi, practice=practice, drill=drill)
+        state.update(midi=midi, practice=practice, drill=drill, tapcheck=tapcheck)
         if start_midi:
             await asyncio.to_thread(midi.start)
             reminder.start()
@@ -192,13 +199,67 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             await asyncio.to_thread(results.shutdown, True)
             store.close()
 
+    def play_history(song_id: str) -> list[dict]:
+        """Play-along attempts of a song (newest first), not the passes of a repeated part."""
+        out = []
+        for a in state["store"].attempts(kind="song", item=song_id, limit=60):
+            d = a["data"] or {}
+            if d.get("mode") == "play" and a["completed"] and isinstance(d.get("score"), dict) and not d.get("loop_pass"):
+                out.append({"hands": a["hands"] or "", "section": a["section"], "span": d.get("span"),
+                            "speed": a["speed"], "score": d["score"].get("total", 0), "range": d.get("range"),
+                            "bar_errors": d.get("bar_errors") or {}})
+        return out
+
+    def after_play(evt: dict, result: dict) -> None:
+        """Findings (PLAN 7.2) and automatic adapt (PLAN 7.3) of a play-along run."""
+        song = course_mod.get_song(str(evt.get("song_id")))
+        if song is None:
+            return
+        store = state["store"]
+        unlocked = set(store.terms())
+        hist = play_history(song["id"])  # hist[0] is this run (saved just before)
+        alone = {}
+        for h in hist:
+            if h["hands"] in ("R", "L") and h["hands"] not in alone:
+                alone[h["hands"]] = h["score"]
+        vr = (state["midi"].calibration() or {}).get("velocity_range") if "midi" in state else None
+        fb = feedback.analyze(song, evt, hist[1:], unlocked, vr, alone)
+        result["findings"] = fb["findings"]
+        result["all_findings"] = [f["id"] for f in fb["all"]]
+        key = ("".join(evt.get("hands") or []), evt.get("section"), evt.get("span"))
+        same = [h for h in hist if (h["hands"], h["section"], h["span"]) == key]
+        adapt = None
+        speed = float(evt.get("speed") or 1.0)
+        if practice_options()["adapt"]:
+            step = feedback.adapt(same, speed)
+            if step and step["action"] in ("slower", "faster"):
+                adapt = {**step, "text": feedback.render(feedback.adapt_text(step["action"], step["speed"]), unlocked)}
+            elif step and step["action"] == "top":
+                nxt = feedback.next_step(song, evt.get("hands") or [], evt.get("section"), evt.get("span"))
+                adapt = {"action": "next", "speed": speed, "next": nxt, "text": feedback.render(nxt["text"], unlocked)}
+        if result.get("learned"):
+            text = feedback.render(feedback.ADAPT_TEXTS["learned"], unlocked)
+            adapt = {**(adapt or {"action": "learned", "speed": speed}), "learned_text": text}
+        result["adapt"] = adapt
+
+    def on_practice_pass(evt: dict) -> None:
+        """One pass of a repeated part (play-along): an attempt for the skill model and history."""
+        try:
+            state["course"].record_run({**evt, "completed": True, "loop_pass": True},
+                                       session_id=state["sessions"].active_id)
+        except Exception:
+            log.exception("Cannot save the pass result")
+
     def on_practice_end(evt: dict) -> None:
-        """A wait-mode run ended: save it, update the course, tell the UI (event "course")."""
+        """A run ended: save it, update the course, tell the UI (event "course"). A play-along
+        run also gets its findings and the automatic speed change."""
         try:
             c: Course = state["course"]
             result = c.record_run(evt, session_id=state["sessions"].active_id)
             if result is None:
                 return
+            if evt.get("mode") == "play":
+                after_play(evt, result)
             unlocked = []
             if evt.get("song_id") in course_mod.content()["demo_songs"] and evt.get("completed"):
                 done = c.complete_basics_task("b3-demo")
@@ -298,6 +359,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             raise HTTPException(409, "The app cannot send notes to the keyboard. "
                                      "Turn off \"Play the song on the keyboard speaker\".")
         hands = body.get("hands")
+        opts = practice_options()
+        practice().unlocked = set(await asyncio.to_thread(state["store"].terms))  # tip words (PLAN 7.4)
         try:
             return await asyncio.to_thread(
                 practice().start,
@@ -305,7 +368,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
                 speed=body.get("speed", 1.0), section=body.get("section"),
                 count_in=bool(body.get("count_in", True)), accompany=bool(body.get("accompany", True)),
                 output=output, breaks=body.get("breaks") if isinstance(body.get("breaks"), list) else None,
-                loop=False if body.get("loop") is False else None)
+                loop=False if body.get("loop") is False else None, span=body.get("span"),
+                adapt=opts["adapt"], loop_step=opts["loop_step"])
         except PracticeError as exc:
             raise HTTPException(400, str(exc))
 
@@ -400,7 +464,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         saved = state["store"].get("practice.options", None)
         saved = saved if isinstance(saved, dict) else {}
         return {"speed": clamp_speed(saved.get("speed", 1.0)), "click": bool(saved.get("click", False)),
-                "count_in": bool(saved.get("count_in", True))}
+                "count_in": bool(saved.get("count_in", True)), "adapt": saved.get("adapt", True) is not False,
+                "loop_step": saved.get("loop_step", True) is not False}
 
     @app.get("/api/settings/practice")
     async def get_practice_options():
@@ -411,11 +476,41 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         opts = practice_options()
         if "speed" in body:
             opts["speed"] = clamp_speed(body["speed"])
-        for name in ("click", "count_in"):
+        for name in ("click", "count_in", "adapt", "loop_step"):
             if isinstance(body.get(name), bool):
                 opts[name] = body[name]
         await asyncio.to_thread(state["store"].set, "practice.options", opts)
         return opts
+
+    # Latency calibration: "tap with the click" (PLAN 4 Timing; riyaz/tapcheck.py).
+
+    def latency_state() -> dict:
+        ms = tapcheck_mod.offset_ms(state["store"])
+        return {"offset_ms": ms, "done": state["store"].get(tapcheck_mod.KEY, None) is not None,
+                "max_ms": config.TAP_MAX_S * 1000.0}
+
+    @app.get("/api/settings/latency")
+    async def get_latency_setting():
+        return await asyncio.to_thread(latency_state)
+
+    @app.post("/api/settings/latency/start")
+    async def latency_check_start():
+        return state["tapcheck"].start()
+
+    @app.post("/api/settings/latency/finish")
+    async def latency_check_finish():
+        res = state["tapcheck"].finish()
+        if res.get("ok"):
+            await asyncio.to_thread(state["store"].set, tapcheck_mod.KEY, res["offset_ms"])
+            practice().input_offset_s = res["offset_ms"] / 1000.0
+        return {**res, "text": tapcheck_mod.text_of(res), **(await asyncio.to_thread(latency_state))}
+
+    @app.post("/api/settings/latency/reset")
+    async def latency_reset():
+        state["tapcheck"].cancel()
+        await asyncio.to_thread(state["store"].set, tapcheck_mod.KEY, None)
+        practice().input_offset_s = 0.0
+        return await asyncio.to_thread(latency_state)
 
     # ---------------------------------------------------------------- course (Phase 3b)
 
@@ -487,7 +582,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             sess = state["store"].session(sid) if isinstance(sid, int) else None
             if sess is None or not isinstance(index, int) or not 0 <= index < len(sess["plan"]["blocks"]) \
                     or "drill" not in sess["plan"]["blocks"][index]:
-                raise HTTPException(404, "The app cannot find this part of the practice.")
+                raise HTTPException(404, "The app cannot find this step of the practice.")
             return dict(sess["plan"]["blocks"][index]["drill"]), sid
         if source == "find_key":
             return {"kind": "find_key", "id": "find_key", "rounds": config.FIND_KEY_ROUNDS,
@@ -505,6 +600,10 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         state["store"].add_attempt(kind="drill", item=spec["id"].split(":")[0] if spec.get("source") != "skill"
                                    else spec["id"], day=course_mod.today(), session_id=state["sessions"].active_id,
                                    completed=True, wrong=summary["wrong"], data=summary)
+        if spec.get("kind") == "find_key" and summary.get("times"):
+            # Spaced repetition of "Find the key" (PLAN 9.3).
+            review.record(state["store"], review.FIND_KEY, review.find_key_score(summary["times"], summary["wrong"]),
+                          course_mod.today(), kind="drill", create=True)
         return extra
 
     @app.post("/api/drill/start")
@@ -568,6 +667,44 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     @app.post("/api/habit/notify-test")
     async def notify_test():
         return {"ok": await asyncio.to_thread(session_mod.osascript_notify)}
+
+    # ---------------------------------------------------------------- progress (Phase 4)
+
+    def progress_data() -> dict:
+        store = state["store"]
+        unlocked = set(store.terms())
+        per_song: dict[str, dict] = {}
+        for a in reversed(store.attempts(kind="song", limit=2000)):
+            d = a["data"] or {}
+            mode = d.get("mode", "wait")
+            if not a["completed"] or a["accuracy"] is None or d.get("loop_pass"):
+                continue
+            song = course_mod.get_song(a["item"])
+            if song is None or song.get("source") == "course":
+                continue
+            entry = per_song.setdefault(a["item"], {"song_id": a["item"], "title": song["title"], "points": []})
+            value = (d.get("score") or {}).get("total") if mode == "play" else a["accuracy"]
+            if value is None:
+                continue
+            entry["points"].append({"t": a["t"], "day": a["day"], "mode": mode, "value": round(float(value), 1),
+                                    "speed": a["speed"], "hands": a["hands"], "section": a["section"],
+                                    "whole": a["section"] is None and not d.get("span")})
+        reviews = []
+        for r in store.reviews():
+            song = course_mod.get_song(r["song_id"]) if r["song_id"] else None
+            if r["kind"] == "section" and song is None:
+                continue
+            part = None
+            if song and r["section"] is not None and r["section"] < len(song.get("sections") or []):
+                part = song["sections"][r["section"]]["name"]
+            reviews.append({"item": r["item"], "kind": r["kind"], "title": song["title"] if song else None,
+                            "part": part, "due": r["due"], "interval": r["interval_days"], "last_score": r["last_score"]})
+        return {"skills": skills_mod.model(store, unlocked), "songs": sorted(per_song.values(), key=lambda x: -x["points"][-1]["t"]),
+                "reviews": reviews, "habit": state["sessions"].habit(), "today": course_mod.today()}
+
+    @app.get("/api/progress")
+    async def progress():
+        return await asyncio.to_thread(progress_data)
 
     @app.get("/api/debug/latency")
     async def get_latency():

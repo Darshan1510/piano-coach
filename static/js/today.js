@@ -27,6 +27,20 @@ function clock(s) {
   return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
 }
 
+// The practice calendar (heat map). Today and Progress both use it.
+export function renderCalendar(el, calendar, today) {
+  el.innerHTML = "";
+  for (const c of calendar.cells) {
+    const i = document.createElement("i");
+    i.className = `cal-cell l${c.level}${c.frozen ? " frozen" : ""}${c.future ? " future" : ""}${c.day === today ? " today" : ""}`;
+    i.title = c.future ? "" : `${c.day}: ${c.frozen ? "free day (streak freeze)" : minutesText(c.minutes)}`;
+    el.appendChild(i);
+  }
+}
+
+const FOCUS = { left: "your left hand", right: "your right hand", coordination: "both hands together",
+  rhythm: "your timing", keys: "finding the keys" };
+
 function partName(song, section) {
   return section === null || section === undefined ? "the whole song" : `Part ${section + 1}`;
 }
@@ -100,7 +114,7 @@ export class TodayScreen {
     if (this.data.session && (!this.session || this.session.id !== this.data.session.id)) {
       this.session = this.data.session;
       const left = this.session.blocks.findIndex((b) => b.status !== "done" && b.status !== "skipped");
-      if (left < 0) { // all parts are done or skipped (reload before "Finish"): show the summary
+      if (left < 0) { // all steps are done or skipped (reload before "Finish"): show the summary
         await this.finish();
         return;
       }
@@ -123,7 +137,7 @@ export class TodayScreen {
     const total = active ? plan.minutes : this.minutes;
     const shares = { warmup: 0.1, song: 0.6, review: 0.15, intuition: 0.15 };
     $("today-sub").textContent = active
-      ? `${total} minutes. Do the 4 parts in order. Click "Next" after each part.`
+      ? `${total} minutes. Do the 4 steps in order. Click "Next" after each step.`
       : `${total} minutes: a warm-up, your song, a review and a key game.`;
     $("today-length-row").classList.toggle("hidden", active);
     $("today-plan").classList.toggle("is-compact", active); // while the session runs: a small strip below the block
@@ -167,7 +181,7 @@ export class TodayScreen {
   }
 
   _detail(b) {
-    if (b.kind === "warmup") return `A short part of "${b.title}", slowly`;
+    if (b.kind === "warmup") return `A short part of "${b.title}", slowly${b.focus && FOCUS[b.focus] ? `. It helps ${FOCUS[b.focus]}` : ""}`;
     if (b.kind === "song") return b.hard_part !== null && b.hard_part !== undefined ? `"${b.title}": Part ${b.hard_part + 1} first, then the whole song` : `"${b.title}"`;
     if (b.kind === "review") return `${partName(null, b.section)[0].toUpperCase()}${partName(null, b.section).slice(1)} of "${b.title}"`;
     return "The app names a key. You press it.";
@@ -177,7 +191,7 @@ export class TodayScreen {
     const b = this.block;
     const i = this.index;
     $("today-block-title").textContent = `${i + 1}. ${BLOCK[b.kind].title}`;
-    $("today-block-eyebrow").textContent = `Part ${i + 1} of ${this.session.plan.blocks.length}`;
+    $("today-block-eyebrow").textContent = `Step ${i + 1} of ${this.session.plan.blocks.length}`;
     const text = $("today-block-text");
     const steps = $("today-steps");
     steps.innerHTML = "";
@@ -190,10 +204,12 @@ export class TodayScreen {
       text.textContent = `Practice "${b.title}". The song waits for you at each key. When the song needs a new skill, it stops and shows you the skill.`;
       b.steps.forEach((st, k) => steps.appendChild(this._stepButton(b, st, k)));
     } else {
-      text.textContent = b.why === "done_song"
+      text.textContent = b.why === "due"
+        ? `Play ${partName(null, b.section)} of "${b.title}" along with the song. You learned this song. Today the app asks you to play it again, so that you keep it.`
+        : b.why === "done_song"
         ? `Play ${partName(null, b.section)} of "${b.title}" again. You finished this song before. Playing it again helps you keep it.`
         : `You have no finished song yet. Play ${partName(null, b.section)} of "${b.title}" again.`;
-      steps.appendChild(this._stepButton(b, { section: b.section, speed: null, label: "review" }, 0));
+      steps.appendChild(this._stepButton(b, { section: b.section, speed: null, label: "review", mode: b.mode || "wait" }, 0));
     }
     $("today-next").textContent = i === this.session.plan.blocks.length - 1 ? "Finish" : "Next";
     this._renderTimer();
@@ -204,11 +220,12 @@ export class TodayScreen {
     const btn = document.createElement("button");
     btn.className = `btn btn-lg today-step${done ? " done" : ""}${!done && [...Array(k).keys()].every((x) => this.stepsDone.has(x)) ? " primary" : ""}`;
     const label = st.label === "hard_part" ? `Practice Part ${st.section + 1} slowly (60% speed)`
-      : st.label === "whole" ? "Play the whole song" : `Practice ${partName(null, st.section)}`;
+      : st.label === "whole" ? (st.mode === "play" ? "Play the whole song along" : "Play the whole song")
+      : `Practice ${partName(null, st.section)}`;
     btn.innerHTML = `${done ? ICON_OK : `<span class="today-step-num">${k + 1}</span>`}<span></span>`;
     btn.querySelector("span:last-child").textContent = label;
     btn.addEventListener("click", () => {
-      this.openSong(b.song_id, { returnTo: "today", preset: { mode: "wait", hands: b.hands, section: st.section, speed: st.speed ?? undefined, loop: false } });
+      this.openSong(b.song_id, { returnTo: "today", preset: { mode: st.mode || "wait", hands: b.hands, section: st.section, speed: st.speed ?? undefined, loop: false } });
     });
     return btn;
   }
@@ -349,7 +366,8 @@ export class TodayScreen {
     this.panel.stop();
     this.session = await this.api(`/api/session/${this.session.id}/block`, {
       index: this.index, status, seconds,
-      result: this.lastRun && this.lastRun.song_id === this.block.song_id ? { accuracy: this.lastRun.accuracy ?? null } : null,
+      result: this.lastRun && this.lastRun.song_id === this.block.song_id
+        ? { accuracy: this.lastRun.accuracy ?? null, score: this.lastRun.score ? this.lastRun.score.total : null } : null,
     });
     if (this.index + 1 < this.session.plan.blocks.length) {
       this.index += 1;
@@ -378,7 +396,7 @@ export class TodayScreen {
       ? `Keys right the first time in "${sum.best.title}"${sum.best.whole ? "" : " (one part)"}.` : "Play a song to see a result.";
     $("today-sum-streak").innerHTML = `${FLAME}<span>${sum.streak} day${sum.streak === 1 ? "" : "s"}</span>`;
     $("today-sum-find").textContent = sum.find_key_seconds ? `Find the key: ${sum.find_key_seconds} seconds for each key.` : "";
-    $("today-sum-text").textContent = `You did ${sum.blocks_done} of 4 parts. Practice time today: ${minutesText(sum.day_minutes)}.`;
+    $("today-sum-text").textContent = `You did ${sum.blocks_done} of 4 steps. Practice time today: ${minutesText(sum.day_minutes)}.`;
   }
 
   _renderHabit(h) {
@@ -392,13 +410,6 @@ export class TodayScreen {
     $("habit-goal-text").textContent = `${Math.floor(h.today_minutes)} of ${h.goal_minutes} minutes today`;
     $("habit-goal-fill").style.width = `${pct}%`;
     $("habit-goal").classList.toggle("met", pct >= 100);
-    const cal = $("habit-calendar");
-    cal.innerHTML = "";
-    for (const c of h.calendar.cells) {
-      const i = document.createElement("i");
-      i.className = `cal-cell l${c.level}${c.frozen ? " frozen" : ""}${c.future ? " future" : ""}${c.day === this.data.day ? " today" : ""}`;
-      i.title = c.future ? "" : `${c.day}: ${c.frozen ? "free day (streak freeze)" : minutesText(c.minutes)}`;
-      cal.appendChild(i);
-    }
+    renderCalendar($("habit-calendar"), h.calendar, this.data.day);
   }
 }

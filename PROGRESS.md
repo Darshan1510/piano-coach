@@ -2,8 +2,72 @@
 
 ## Status
 
-- **Stage:** Phase 3 review fixes (2026-11-13), on top of Phase 3a + 3b. Not committed (the user reviews, then commits). Before: Phase 2, commit e8482d7.
-- **Next:** Phase 4 (play-along, scoring, error analysis, nudges, spaced repetition).
+- **Stage:** Phase 4 review fixes (2026-11-14), after Phase 4 (2026-11-14): play-along, scores, live feedback, after-run findings, automatic adapt, spaced repetition, skill model, Progress page. Not committed (the user reviews, then commits). Before: Phase 3, commit 81efb00.
+- **Next:** Phase 5 (course Levels 4-8, intuition exercises, simplifier, audio import, song editor).
+
+## Phase 4 review fixes (2026-11-14)
+
+Details and reasons: `DECISIONS.md` "Phase 4 review fixes". Not committed.
+
+- Loop play-along: a first-note press up to 250 ms before the wrap counts for the next pass; a late last-note press after the wrap counts for the pass before (`practice.py` `_prev`/`_next`/`_route`).
+- Loop passes: `data.loop_pass` is saved; passes stay out of the run history (findings, adapt, coordination) and the Progress chart.
+- Pause back (hidden window) in play-along rewinds the play matcher: replayed notes are not extra notes.
+- Latency calibration: Settings card "Tap with the click" (8 clicks, median offset, 0-300 ms, ≥ 5 taps, even taps), `riyaz/tapcheck.py`, `/api/settings/latency` (+ `/start`, `/finish`, `/reset`); play-along takes the offset away from each key time; the click is scheduled `outputLatency` early when the browser gives it. `fake_player.py --tap URL`.
+- Matcher: earliest same-key note, but the nearest when the earliest is > 120 ms away and a later one is within 120 ms; "miss" notes do not take a press.
+- Reviews count only at 100% speed with the ladder hands. Finding actions with no place keep the current part. Progress "No results yet" as `.sr-only` text. Comments fixed (config.py, matcher.py).
+
+### Results
+
+`uv run pytest`: **298 passed** (291 in 20 s + `tests/test_midi_virtual.py` 7 alone in 36 s; 10 new tests in `tests/test_play.py`, the loop test rewritten). `make build-mac`: OK, **42 MB**.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Exact fake player ≥ 98 | **Pass: 100 every time** | Real CoreMIDI + source app: 9/9 songs (6 R, Ode LH, Twinkle LH, Frère both hands) = 100, 0 missed, mean error 0.1-0.4 ms. Frozen app: Ode to Joy 100 (0.2 ms). |
+| 2. Errors → findings | **Pass** | Real CoreMIDI, ±150 ms, 10% slips, hard bar 3, shift −80/0/+80, 2 songs × 3 shifts × seeds 10/20/30, 2 runs each = 18 cases: hard bar 18/18, slips classified 18/18, slip finding 9/9 (cases with ≥ 3 slips), rushing/dragging 10/12 (misses: Twinkle +80 seed 20 mean +49.4 ms, Ode +80 seed 30 mean +54.9 ms; below the 60 ms rule), false timing 0/6. Fake clock: `test_findings_hard_bar_slips_rushing` (slips assert now unconditional, seed 1 = 4 slips). |
+| 3. Automatic speed changes | **Pass** | Unit + server tests as Phase 4 (all pass); `test_loop_auto_step_after_3_clean_passes` rewritten for the delayed pass result; `test_loop_passes_stay_out_of_history_and_progress` (3 passes < 60 + 1 run < 60: no "slower"). |
+| +80 ms user delay | **Pass** | Source app, constant +80 ms (±20 ms): no calibration Ode mean +80.2 ms, Twinkle +82.5 ms → "dragging"; `fake_player --tap` +80: offset 78.6 ms (8 taps, spread 9 ms); with calibration Ode +1.7 ms, Twinkle +3.9 ms → no finding. Frozen app: Twinkle +82.5 → dragging; tap 79.0 ms; then +3.5 ms, no finding. Fake clock: `test_latency_calibration_takes_the_offset_away`. |
+| Fix tests | **Pass** | `test_loop_early_press_at_the_wrap_and_late_press_after_it` (−100 ms first note, +100 ms last note: 3 passes 100, 0 extra, 0 missed; −200 ms = early, not extra), `test_pause_back_in_play_along_rewinds_the_notes` (100), `test_fast_repeated_keys_after_a_missed_note_take_the_nearest`, `test_nearest_only_when_the_later_note_is_within_good`, `test_a_missed_note_is_closed_after_a_speed_change`, `test_review_counts_only_at_full_speed_with_the_ladder_hands`, `test_tap_check_offset_math`, `test_tap_check_through_the_server` (incl. foreign Origin 403). |
+| Screenshots | **Done** | Hidden WKWebView, dark + light: "Tap with the click" idle, running (dots), result (real check through the virtual port, 82 ms), failed. No JS errors, no horizontal scroll. The check page turns off the screen animation and transitions (no frames in a hidden window: the screen stayed at opacity 0 and the theme change stopped half way; not an app fault). the scratchpad folder (`phase4-fix/shots/`) |
+
+### Open issues (Phase 4 review fixes)
+
+- WKWebView gives `AudioContext.outputLatency` = undefined (baseLatency 2.7 ms): the click is not moved; the tap check covers the delay. Click sound and the tap check with a real person and the YPT-320 not tested (hidden window: no sound heard).
+- The offset is also taken away from the keys when the user plays with the app's notes (no click); one value for all.
+- Rushing/dragging with ±150 ms jitter: 10/12 (means of +49 / +55 ms with an 80 ms shift are below the 60 ms rule).
+- A loop pass result comes about 250 ms after the wrap (the late window of the last notes).
+
+## Phase 4 (2026-11-14)
+
+Details and reasons: `DECISIONS.md` "Phase 4".
+
+- `riyaz/matcher.py` `PlayMatcher` + `score_of` (windows ±50/±120/±250 ms at the current speed, earliest unmatched same key, extra notes, neighbor slips, short notes, stop point, rewind); `riyaz/practice.py` mode `play` (stop → "Continue from here", Loop passes with +5% auto step, live tips, `span` places); `riyaz/feedback.py` (live tips, 9 patterns + slips, at most 3, adapt, next step); `riyaz/review.py` (SM-2 style); `riyaz/skills.py` (8 skills); `riyaz/course.py` real song-done rule + learned; `riyaz/session.py` review block from the due items, weakest skill picks the warm-up hands; `riyaz/db.py` version 3; `riyaz/server.py` findings + adapt in the `course` event, `GET /api/progress`, options `adapt`/`loop_step`.
+- UI: mode "Play along"; green/yellow/red keys; tip line; dashed "Continue from here" line; score card (stars, points, right keys / on time / held long enough), speed message, up to 3 findings with preview (red notes), "Show me", action buttons; warm band on the falling notes for the place (Rule 1); switches "Change the speed for me", "Go faster after 3 good runs"; NAV "Progress" (skill radar + table, calendar, "Play again soon", results over time + table); daily session "Step 1 of 4" / "Skip this step".
+- `tools/fake_player.py`: `--mode play`, `--runs`, `--jitter-ms`, `--shift-ms`, `--slip-rate`, `--hard-bar`, `--seed`; `--session` plays play-along steps too.
+- No new packages. Real YPT-320 connected: all checks used `RIYAZ_PORT_FILTER` (virtual ports only) and temp data folders.
+
+### Phase 4 acceptance
+
+`uv run pytest`: **288 passed** (281 in 19 s + `tests/test_midi_virtual.py` 7 alone in 35 s; 42 new in `tests/test_play.py`). `make build-mac`: OK, **42 MB**.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Exact fake player ≥ 98 | **Pass: 100 every time** | Fake clock: `test_exact_fake_player_scores_at_least_98_each_song` (9 songs × each hand choice, all 100, 0 missed, 0 wrong). Real CoreMIDI + running app (`fake_player --mode play --follow`): 11/11 runs = 100 points, 3 stars (6 Level 1-2 songs R, Au Clair RL, Ode LH, Twinkle LH, Frère both hands RL and L); mean timing error 0.1-0.3 ms. Frozen `Riyaz.app --server`: Ode to Joy 100 points (mean error 0.4 ms). |
+| 2. Errors → findings | **Pass** | Real CoreMIDI + app, ±150 ms jitter, 10% neighbor slips, hard bar 3, shift −80 / 0 / +80 ms, 2 songs × 3 shifts × 3 seeds = 18 cases (2 runs each; the hard spot needs 2 of the last 3 runs): hard bar found and shown **18/18** (bar 3 each time); slips classified **18/18** (found = sent); "slips" finding **11/11** cases with ≥ 3 slips (shown 11/11); rushing/dragging **11/12** one-sided cases (miss: Ode +80 seed 2, mean +56.8 ms < 60 ms rule), **0/6** false timing findings with no shift. Fake clock sweep (6 songs × 3 shifts × 5 seeds = 90): hard bar 90/90, slips counted 90/90, slip finding 54/54, timing 85/90 (5 misses: means within 40-60 ms of 0 with ±150 ms jitter on 21-29 notes); 8/90 extra "hand move" findings (random slips right after a move). |
+| 3. Automatic speed changes | **Pass** | Unit: `test_adapt_3_failed_runs_slower_min_40`, `..._counts_only_runs_at_the_current_speed`, `..._3_clean_runs_faster_up_to_100_then_next_step` (+5, +10 when all ≥ 95, cap 100, next step both hands / next part / whole song / new song), `test_loop_auto_step_after_3_clean_passes` (+5% in Loop), learned at 85 + reviews (`test_learned_song_schedules_reviews`). End to end through the server: `test_adapt_end_to_end_through_the_server` (100% → 3 fails → 85%, 3 clean → 90%, at 100% → next step, setting off → none). Window check (source app, Twinkle at 100% with errors): after the 3rd run < 60 the course event said "slower 85%" and the page set the speed to 85%. |
+| Song done / learned | **Pass** | `test_song_done_rule` (play ≥ 80 at 100%; wait mode only Level 1), `test_level_1_to_2_to_3...` (Level 2-3 with play-along; a Level 2 wait run = keys learned only). |
+| Spaced repetition, skills | **Pass** | `test_spaced_repetition_schedule` (×2 / same / 1 day, only when due, once a day), `test_session_review_block_uses_the_due_item`, `test_find_key_drill_is_a_review_item`, `test_skill_model_from_results`, `test_weakest_skill_picks_the_warmup_hand`, `test_database_v2_upgrades_to_v3`. |
+| Rule 6 | **Pass** | `test_rule_6_feedback_texts` (tips, findings, buttons, speed texts, skill names; no term unlocked and each single term unlocked); the UI scan now covers `progress.js` and the new practice strings. |
+| Frozen app | **Pass** | `Riyaz.app --server` (temp data, port filter): exact play-along run 100 points; 2 error runs (Twinkle, ±150 ms, −80 ms, 10% slips, hard bar 3): 66 and 72 points, run 2 findings = hard spot (bar 3) + rushing, live tips "Use finger 5 here.", "Wait for the click.", "Keep the key down longer."; foreign Origin POST 403, bad Host 400. A second fake-player run with the same port name right after the first got no keys (known hot-plug issue, IDEAS.md): the app paused with "stopped" as designed; a new port name worked. |
+| WKWebView screenshots | **Done** | Dark + light: play-along live (red neighbor key, "Use finger 5 here."), after-run card (score, speed message, 3 findings with red previews, Show me, action buttons), "Continue from here" stop, Progress at 1280 and 1100 px with results and empty. Fixed after looking: previews blank (drawn only in an animation frame), card taller than the stage (main buttons now above the findings, title + score on one line), old tip left in the banner; Progress (user feedback): radar labels clipped/touching the table, "No results yet" wrapping in every row ("—" + one note), chart not top-aligned, stacking at 1100 px, empty state. the scratchpad folder (`phase4/`) (`shots/`, `shots-pg/`, `shots-empty/`). |
+
+### Open issues (Phase 4)
+
+- Not tested with the real YPT-320 or by a person (timing with a real cable, tips while playing, the 2-second stop rule with a real beginner).
+- The check window is hidden (the user was using the Mac; a visible window took real clicks): no animation frames, so the driver draws frames by hand; "Show me" animation and sound not seen/heard.
+- Rushing/dragging uses the plan numbers (−40 / +60 ms); with ±150 ms random timing on a short song (20-30 notes) a one-sided shift of 80 ms is found about 11 of 12 times.
+- Hand-move finding can fire on random slips right after a move (8/90 in the sweep).
+- Findings only after play-along runs (not wait mode). One speed setting for all songs.
+- Restart (the user plays the phrase again) is not detected separately.
 
 ## Phase 3 review fixes (2026-11-13)
 

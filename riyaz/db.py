@@ -10,6 +10,9 @@ Phase 1: settings (port choice, calibration). Phase 3b adds the progress tables:
 - ``skills_done``   skill moments that the user passed (PLAN 8.2)
 - ``terms``         unlocked music terms and "card seen" (PLAN 7.4 Rules 2-4)
 
+Phase 4 (version 3): ``song_progress`` gets best_score (play-along), learned, learned_at, keys_ok;
+new table ``reviews`` (spaced repetition items, PLAN 9.3).
+
 Days are local dates "YYYY-MM-DD". All writes go through one lock (the MIDI thread, the practice
 thread and the server thread all write).
 """
@@ -93,12 +96,35 @@ CREATE TABLE IF NOT EXISTS terms (
 """
 
 
+# Phase 4: spaced repetition items. item = "section:<song id>:<part index>" or "drill:find_key".
+_SCHEMA_3 = """
+CREATE TABLE IF NOT EXISTS reviews (
+    item          TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,
+    song_id       TEXT,
+    section       INTEGER,
+    interval_days REAL NOT NULL DEFAULT 1,
+    due           TEXT NOT NULL,
+    reps          INTEGER NOT NULL DEFAULT 0,
+    last_score    REAL,
+    last_day      TEXT,
+    created       REAL NOT NULL
+);
+"""
+_MIGRATION_3 = """
+ALTER TABLE song_progress ADD COLUMN best_score REAL;
+ALTER TABLE song_progress ADD COLUMN learned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE song_progress ADD COLUMN learned_at REAL;
+ALTER TABLE song_progress ADD COLUMN keys_ok INTEGER NOT NULL DEFAULT 0;
+""" + _SCHEMA_3
+
 # Schema version in "PRAGMA user_version". 0 = a database of Phase 1-2 (settings table only, no
 # version). 2 = Phase 3 (the progress tables). A later version adds a step to _MIGRATIONS; each
 # step runs one time, in order, and then the version number changes in the same transaction.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _MIGRATIONS: dict[int, str] = {
     2: _SCHEMA,  # Phase 3: add the progress tables (CREATE IF NOT EXISTS; settings is unchanged)
+    3: _MIGRATION_3,  # Phase 4: play-along columns in song_progress, spaced repetition table
 }
 
 
@@ -117,13 +143,13 @@ class Store:
         if version > SCHEMA_VERSION:
             # A newer app made this database. Use it as it is (tables are only added, never changed).
             log.warning("Database version %d is newer than this app (%d)", version, SCHEMA_VERSION)
-            self._conn.executescript(_SCHEMA)
+            self._conn.executescript(_SCHEMA + _SCHEMA_3)
             return
         for target in sorted(_MIGRATIONS):
             if target > version:
                 self._conn.executescript(f"BEGIN;\n{_MIGRATIONS[target]}\nPRAGMA user_version = {int(target)};\nCOMMIT;")
                 version = target
-        self._conn.executescript(_SCHEMA)  # always safe (CREATE IF NOT EXISTS)
+        self._conn.executescript(_SCHEMA + _SCHEMA_3)  # always safe (CREATE IF NOT EXISTS)
         self._conn.commit()
 
     def schema_version(self) -> int:
@@ -234,7 +260,7 @@ class Store:
 
     def reset_course(self) -> None:
         with self._lock:
-            for table in ("course", "skills_done", "terms", "song_progress"):
+            for table in ("course", "skills_done", "terms", "song_progress", "reviews"):
                 self._conn.execute(f"DELETE FROM {table}")
             self._conn.commit()
 
@@ -270,18 +296,24 @@ class Store:
         for r in rows:
             r["part_errors"] = json.loads(r["part_errors"] or "{}")
             r["done"] = bool(r["done"])
+            r["learned"] = bool(r.get("learned"))
+            r["keys_ok"] = bool(r.get("keys_ok"))
             out[r["song_id"]] = r
         return out
 
     def update_song_progress(self, song_id: str, *, accuracy: float | None, full: bool, done: bool,
-                             part_errors: dict[int, int], t: float | None = None) -> dict:
-        """One wait-mode run. Returns the new row. part_errors: errors per part in this run."""
+                             part_errors: dict[int, int], t: float | None = None, score: float | None = None,
+                             keys_ok: bool = False) -> dict:
+        """One run (wait or play-along). Returns the new row. part_errors: errors per part in this run.
+        score: the play-along total of a whole-song run (best_score). keys_ok: a wait-mode run that
+        passed the song-done numbers (step 1: the keys are learned)."""
         t = time.time() if t is None else t
         with self._lock:
             row = self.song_progress(song_id).get(song_id)
             if row is None:
                 row = {"song_id": song_id, "runs": 0, "best_accuracy": None, "best_full": None, "done": False,
-                       "done_at": None, "last_played": None, "part_errors": {}}
+                       "done_at": None, "last_played": None, "part_errors": {}, "best_score": None,
+                       "learned": False, "learned_at": None, "keys_ok": False}
             row["runs"] += 1
             row["last_played"] = t
             if accuracy is not None:
@@ -291,19 +323,49 @@ class Store:
             if done and not row["done"]:
                 row["done"] = True
                 row["done_at"] = t
+            if score is not None:
+                row["best_score"] = score if row.get("best_score") is None else max(row["best_score"], score)
+            row["keys_ok"] = bool(row.get("keys_ok")) or bool(keys_ok)
             # Errors per part: the last 3 runs that played the part (PLAN 7.2 "2 of the last 3 runs").
             hist = row["part_errors"]
             for part, n in part_errors.items():
                 hist[str(part)] = (hist.get(str(part), []) + [int(n)])[-3:]
             self._conn.execute(
                 "INSERT INTO song_progress(song_id, runs, best_accuracy, best_full, done, done_at, last_played, "
-                "part_errors) VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(song_id) DO UPDATE SET runs = excluded.runs, "
+                "part_errors, best_score, keys_ok) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(song_id) DO UPDATE "
+                "SET runs = excluded.runs, "
                 "best_accuracy = excluded.best_accuracy, best_full = excluded.best_full, done = excluded.done, "
-                "done_at = excluded.done_at, last_played = excluded.last_played, part_errors = excluded.part_errors",
+                "done_at = excluded.done_at, last_played = excluded.last_played, part_errors = excluded.part_errors, "
+                "best_score = excluded.best_score, keys_ok = excluded.keys_ok",
                 (song_id, row["runs"], row["best_accuracy"], row["best_full"], int(row["done"]), row["done_at"],
-                 row["last_played"], json.dumps(hist)))
+                 row["last_played"], json.dumps(hist), row["best_score"], int(row["keys_ok"])))
             self._conn.commit()
             return row
+
+    def mark_learned(self, song_id: str, t: float | None = None) -> bool:
+        """True if the song is newly learned (PLAN 7.3)."""
+        with self._lock:
+            cur = self._conn.execute("UPDATE song_progress SET learned = 1, learned_at = ? WHERE song_id = ? AND learned = 0",
+                                     (time.time() if t is None else t, song_id))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    # ------------------------------------------------------------------ spaced repetition (Phase 4)
+
+    def review(self, item: str) -> dict | None:
+        rows = self.query("SELECT * FROM reviews WHERE item = ?", (item,))
+        return rows[0] if rows else None
+
+    def reviews(self) -> list[dict]:
+        return self.query("SELECT * FROM reviews ORDER BY due, item")
+
+    def save_review(self, row: dict) -> None:
+        self.execute(
+            "INSERT INTO reviews(item, kind, song_id, section, interval_days, due, reps, last_score, last_day, created) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(item) DO UPDATE SET interval_days = excluded.interval_days, "
+            "due = excluded.due, reps = excluded.reps, last_score = excluded.last_score, last_day = excluded.last_day",
+            (row["item"], row["kind"], row.get("song_id"), row.get("section"), row["interval_days"], row["due"],
+             row.get("reps", 0), row.get("last_score"), row.get("last_day"), row.get("created") or time.time()))
 
     # ------------------------------------------------------------------ sessions
 

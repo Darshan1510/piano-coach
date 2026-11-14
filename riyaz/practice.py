@@ -19,6 +19,14 @@ Events (WebSocket, all new in Phase 2; Phase 1 events do not change):
 Phase 3b (fields added, old fields kept):
   practice_end    + accuracy (% of stops with a right first key), clean_stops, section, errors
   practice_skill  {skill, beat, song_id, run}: the song stopped before a new skill (PLAN 8.2)
+Phase 4 play-along (mode "play"; fields added, old fields kept):
+  practice_hit    + grade (perfect | good | early | late), err_ms, note
+  practice_wrong  + slip, intended, finger (a wrong neighbor key); stop is None
+  practice_miss   {pitch, note, beat, song_id, run}: a note got no press in its window
+  practice_tip    {tip, text, song_id, run}: one live tip (PLAN 7.1), at most one each 4 s
+  practice_pass   {pass, score, speed, adapt, ...}: one pass of a repeated part (Loop, PLAN 6.3)
+  practice_end    + score {total, stars, accuracy, timing, length, ...}, log {notes, extras}, span
+  practice        + stop_beat (pause reason "stopped": "Continue from here?"), span, adapt, loop_step
 """
 
 from __future__ import annotations
@@ -29,12 +37,12 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
-from . import clock, config
-from .matcher import EPS, WaitMatcher
+from . import clock, config, feedback
+from .matcher import EPS, PlayMatcher, WaitMatcher
 
 log = logging.getLogger("riyaz.practice")
 
-MODES = ("watch", "wait")
+MODES = ("watch", "wait", "play")
 OUTPUTS = ("mac", "keyboard")
 
 
@@ -90,6 +98,10 @@ class Practice:
         self.run = 0  # +1 at each start: a pause for an older run is ignored (requests can cross)
         self.song: dict | None = None
         self.echo = EchoGuard()
+        self.unlocked: set[str] = set()  # unlocked music terms (tip texts, PLAN 7.4); the server sets it
+        # Latency calibration ("tap with the click", PLAN 4 Timing): the user's keys come this many
+        # seconds after the click that the user hears. Play-along takes it away from each key time.
+        self.input_offset_s = 0.0
         self._reset_fields()
         self._thread = None
         if threaded:
@@ -120,6 +132,20 @@ class Practice:
         self.started_t = 0.0
         self.matcher: WaitMatcher | None = None
         self.breaks: list[tuple[float, str]] = []  # (at beat, skill id): stop before a new skill
+        self.play: PlayMatcher | None = None  # play-along (Phase 4)
+        # Loop in play-along: the pass before stays open until its last notes' late window ends;
+        # presses just before the wrap can be early presses for the next pass (review fix 1).
+        self._prev: PlayMatcher | None = None
+        self._next: PlayMatcher | None = None
+        self.span: tuple[float, float] | None = None  # a repeated place that is not a song part
+        self.tips = feedback.LiveTips()
+        self.stop_beat: float | None = None  # "Continue from here?" (the user stopped)
+        self.lead_to: float | None = None  # after "Continue from here": clicks until this beat
+        self._in_t = 0.0  # time and beat of the last key press (or of the start): stop detection
+        self._in_beat = 0.0
+        self.adapt_on = True  # PLAN 7.3 (setting, on by default)
+        self.loop_step = True  # PLAN 6.3 Loop: +5% after 3 clean runs
+        self.pass_scores: list[dict] = []  # passes of a repeated part at the current speed (newest first)
         self._app_notes: list[dict] = []
         self._out_i = 0
         self._sounding: list[tuple[float, int]] = []  # (off time, pitch) on the keyboard output
@@ -177,7 +203,8 @@ class Practice:
 
     def start(self, song: dict, mode: str = "wait", hands=("R",), speed: float = 1.0,
               section: int | None = None, count_in: bool = True, accompany: bool = True,
-              output: str = "mac", breaks: list | None = None, loop: bool | None = None) -> dict:
+              output: str = "mac", breaks: list | None = None, loop: bool | None = None,
+              span=None, adapt: bool = True, loop_step: bool = True) -> dict:
         if not isinstance(mode, str) or mode not in MODES:
             raise PracticeError("Select Watch or Play.")
         if not isinstance(output, str) or output not in OUTPUTS:
@@ -192,6 +219,12 @@ class Practice:
         if section is not None and not (isinstance(section, int) and not isinstance(section, bool)
                                         and 0 <= section < len(sections)):
             raise PracticeError("The app cannot find this part of the song. Select a different part.")
+        if span is not None:
+            ok = (isinstance(span, (list, tuple)) and len(span) == 2
+                  and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in span))
+            if not ok or not (0 <= span[0] < span[1] <= song["end"] + EPS) or span[1] - span[0] < 0.5 - EPS:
+                raise PracticeError("The app cannot find this place in the song. Select a different part.")
+            section = None
         msgs = []
         with self._lock:
             msgs = self._all_off()
@@ -202,7 +235,11 @@ class Practice:
             self.hands = hands
             self.speed = clamp_speed(speed)
             self.rate = song["bpm"] * self.speed / 60.0
-            if section is None:
+            if span is not None:
+                self.span = (float(span[0]), float(min(span[1], song["end"])))
+                self.range_start, self.range_end = self.span
+                self.loop = loop is not False
+            elif section is None:
                 self.range_start, self.range_end = 0.0, song["end"]
             else:
                 s = sections[section]
@@ -215,12 +252,18 @@ class Practice:
             if mode == "wait":
                 self.matcher = WaitMatcher.for_song(song, hands, self.range_start, self.range_end)
                 self.breaks = _check_breaks(breaks, self.range_start, self.range_end)
+            elif mode == "play":
+                self.play = PlayMatcher.for_song(song, hands, self.range_start, self.range_end)
+            self.adapt_on = bool(adapt)
+            self.loop_step = bool(loop_step)
             self._app_notes = self._select_app_notes()
             t = self.now()
             self._anchor(t, self.range_start - self.count_in)
             self._out_i = 0
             self.started_t = t
             self.running = True
+            self._in_t = t + self.count_in / self.rate  # the song starts after the count-in
+            self._in_beat = self.range_start - EPS
             state = self._emit_state(t)
         self._send(msgs)
         self._wake.set()
@@ -239,6 +282,11 @@ class Practice:
                         low = max(low, self.matcher.stops[self.matcher.index - 1].beat)
                     if low <= at_beat < b:
                         b = float(at_beat)
+                        if self.play is not None:
+                            # Play-along: the notes from there get a new chance (the user plays
+                            # them again after "Continue"); else they would be extra notes.
+                            self.play.rewind(b)
+                            self._next = None
                 self._anchor(t, b)
                 self.running = False
                 self.paused = True
@@ -258,6 +306,8 @@ class Practice:
                 self.running = True
                 self.paused = False
                 self.pause_reason = None
+                self.stop_beat = None
+                self._in_t, self._in_beat = t, self.anchor_beat
             state = self._emit_state(t)
         self._wake.set()
         return state
@@ -306,12 +356,48 @@ class Practice:
             b = min(raw, self.range_end)
         if self.breaks and self._break_due(b):
             return msgs_then(self._schedule_output(t, b), self._skill_break(t))
+        if self.play is not None:
+            stop = self._play_tick(t, b)
+            if stop is not None:
+                return self._stop_pause(t, stop)
         msgs = self._schedule_output(t, b)
         if hold is None and raw >= self.range_end - EPS:
             if self.loop:
                 msgs += self._wrap(t, raw)
             else:
                 msgs += self._finish(t)
+        return msgs
+
+    def _play_tick(self, t: float, b: float) -> float | None:
+        """Play-along: notes with no press in their window are missed. More than PLAY_STOP_GAP_S
+        with no key while notes were missed = the user stopped: returns the stop point (beat)."""
+        assert self.play is not None
+        if self._prev is not None:
+            length = self.range_end - self.range_start
+            for n in self._prev.advance(b + length, self.rate):
+                self._emit({"type": "practice_miss", "pitch": n.pitch, "note": n.index, "beat": n.start,
+                            "song_id": self.song["id"], "run": self.run})
+            if b > self.range_start + config.PLAY_WINDOW_S * self.rate + EPS:
+                self._close_prev(t)
+        for n in self.play.advance(b, self.rate):
+            self._emit({"type": "practice_miss", "pitch": n.pitch, "note": n.index, "beat": n.start,
+                        "song_id": self.song["id"], "run": self.run})
+        if t - self._in_t > config.PLAY_STOP_GAP_S:
+            n = self.play.first_missed_after(self._in_beat, self.rate)
+            if n is not None:
+                return n.start
+        return None
+
+    def _stop_pause(self, t: float, beat: float) -> list:
+        """Pause at the stop point; the page asks "Continue from here?" (PLAN 6.4, 7.4)."""
+        self._anchor(t, beat)
+        self.running = False
+        self.paused = True
+        self.pause_reason = "stopped"
+        self.stop_beat = beat
+        msgs = self._all_off()
+        self._out_i = self._first_app_note(beat)
+        self._emit_state(t)
         return msgs
 
     def _break_due(self, b: float) -> bool:
@@ -351,10 +437,21 @@ class Practice:
                     m = self.matcher
                     m.index = next((i for i, st in enumerate(m.stops) if st.beat >= beat - EPS), len(m.stops))
                     m._presses.clear()
-                lead = beat - config.SEEK_LEAD_BEATS  # before the range start = a short silent lead-in
+                lead_beats = config.SEEK_LEAD_BEATS
+                if self.play is not None:
+                    # Play-along: one group of clicks before the place, so the user can find the time.
+                    if self._prev is not None:
+                        self._close_prev(t)
+                    self._next = None
+                    self.play.rewind(beat)
+                    lead_beats = float(self.song["time_signature"][0])
+                    self.lead_to = beat
+                lead = beat - lead_beats  # before the range start = a short silent lead-in
                 self._anchor(t, lead)
                 self._out_i = self._first_app_note(lead)
                 self.waiting = False
+                self.stop_beat = None
+                self._in_t, self._in_beat = t + lead_beats / self.rate, beat - EPS
                 if resume:
                     self.running = True
                     self.paused = False
@@ -373,9 +470,51 @@ class Practice:
         self.waiting = False
         if self.matcher is not None:
             self.matcher.reset()
+        if self.play is not None:
+            if self._prev is not None:
+                self._close_prev(t)
+            # The pass stays open for the late presses of its last notes (closed in _play_tick).
+            self._prev = self.play
+            self.play = self._next if self._next is not None else self._new_play()
+            self._next = None
         self._out_i = 0
+        self._in_t, self._in_beat = t, self.range_start - EPS
         self._emit_state(t)
         return msgs
+
+    def _new_play(self) -> PlayMatcher:
+        return PlayMatcher.for_song(self.song, self.hands, self.range_start, self.range_end)
+
+    def _close_prev(self, t: float) -> None:
+        prev, self._prev = self._prev, None
+        if prev is not None:
+            self._pass_result(t, prev)
+
+    def _pass_result(self, t: float, pm: PlayMatcher) -> None:
+        """One pass of a repeated part in play-along (PLAN 6.3 Loop): score it, then the automatic
+        speed step (+5% after 3 clean passes; -15% after 3 failed passes, PLAN 7.3)."""
+        score = pm.finish(self.range_end)
+        log = pm.log()
+        self.pass_scores.insert(0, {"score": score["total"], "speed": self.speed})
+        step = feedback.adapt(self.pass_scores, self.speed, up_big=False, allow_down=self.adapt_on,
+                              allow_up=self.loop_step)
+        if step is not None and step["action"] == "faster":
+            step["speed"] = min(config.SONG_DONE_SPEED, round(self.speed + config.LOOP_STEP, 2))
+        change = None
+        if step is not None and step["action"] in ("faster", "slower"):
+            change = {"action": step["action"], "speed": step["speed"],
+                      "text": feedback.render(feedback.adapt_text("loop_" + step["action"], step["speed"]), self.unlocked)}
+        self._emit({"type": "practice_pass", "song_id": self.song["id"], "run": self.run, "pass": self.passes,
+                    "mode": "play", "hands": list(self.hands), "speed": self.speed, "section": self.section,
+                    "span": list(self.span) if self.span else None, "range": [self.range_start, self.range_end],
+                    "score": score, "accuracy": score["accuracy"], "log": _cap_log(log), "adapt": change,
+                    "errors": feedback.error_list(log)[:500]})
+        if change is not None:
+            self._anchor(t, self._beat(t))  # the new pass already runs: keep its place
+            self.speed = clamp_speed(change["speed"])
+            self.rate = self.song["bpm"] * self.speed / 60.0
+            self.pass_scores = []
+            self._emit_state(t)
 
     def _finish(self, t: float) -> list:
         msgs = self._all_off()
@@ -391,6 +530,13 @@ class Practice:
             clean = stops - len(bad)
             extra.update(clean_stops=clean, accuracy=round(100.0 * clean / stops, 1) if stops else 100.0,
                          errors=[{"beat": m.stops[e["stop"]].beat, "pitch": e["pitch"]} for e in m.errors][:500])
+        if self.play is not None:
+            score = self.play.finish(self.range_end)
+            log = self.play.log()
+            stops = score["notes"]
+            extra.update(score=score, accuracy=score["accuracy"], log=_cap_log(log),
+                         errors=feedback.error_list(log)[:500])
+        extra["span"] = list(self.span) if self.span else None
         self._emit({"type": "practice_end", "song_id": self.song["id"], "mode": self.mode, "completed": True,
                     "hands": list(self.hands), "wrong": self.wrong, "stops": stops,
                     "seconds": round(t - self.started_t, 2), "speed": self.speed, "run": self.run, **extra})
@@ -404,6 +550,9 @@ class Practice:
         if kind not in ("note_on", "note_off"):
             return
         with self._lock:
+            if self.play is not None and self.song is not None:
+                self._play_midi(kind, evt)
+                return
             m = self.matcher
             if self.song is None or m is None:
                 return
@@ -441,10 +590,78 @@ class Practice:
                 self._emit_state(t)
         self._wake.set()
 
+    def _play_midi(self, kind: str, evt: dict) -> None:
+        """Play-along input (PLAN 6.4): grade each press, find extra and wrong neighbor keys,
+        check the note length, give live tips (PLAN 7.1). Call with the lock held."""
+        assert self.play is not None and self.song is not None
+        pitch = evt["pitch"]
+        t = evt.get("t")
+        t = self.now() if t is None else t
+        t -= self.input_offset_s  # latency calibration: the time that the user meant
+        ids = {"song_id": self.song["id"], "run": self.run}
+        b = self._beat(t)
+        if self.loop and self.running:
+            b = self._raw_beat(t)  # after the end of the part, before the tick wraps: the next pass
+        if kind == "note_off":
+            pm, pb = self.play, b
+            length = self.range_end - self.range_start
+            if not self.play.holds(pitch):
+                if self._prev is not None and self._prev.holds(pitch):
+                    pm, pb = self._prev, b + length
+                elif self._next is not None and self._next.holds(pitch):
+                    pm, pb = self._next, b - length
+            res = pm.release(pitch, t, pb)
+            tip = self.tips.on_release(res, t) if self.running else None
+            if tip:
+                self._emit({"type": "practice_tip", **tip, "text": feedback.render(tip["text"], self.unlocked), **ids})
+            return
+        if not self.running:
+            return
+        if b < self.range_start - config.PLAY_WINDOW_S * self.rate - EPS:
+            return  # the count-in still runs
+        pm, pb = self._route(pitch, b)
+        res = pm.press(pitch, t, pb, self.rate, evt.get("velocity"))
+        if res["result"] == "ignored":
+            return
+        self._in_t, self._in_beat = t, b
+        if res["result"] == "hit":
+            self._emit({"type": "practice_hit", "pitch": pitch, "stop": None, "grade": res["grade"],
+                        "err_ms": res["err_ms"], "note": res["note"], "t": t, **ids})
+        else:
+            self.wrong += 1
+            self._emit({"type": "practice_wrong", "pitch": pitch, "expected": res["expected"], "beat": round(b, 4),
+                        "stop": None, "slip": res["slip"], "intended": res.get("intended"),
+                        "finger": res.get("finger"), "t": t, **ids})
+        tip = self.tips.on_press(res, t)
+        if tip:
+            self._emit({"type": "practice_tip", **tip, "text": feedback.render(tip["text"], self.unlocked), **ids})
+
+    def _route(self, pitch: int, b: float) -> tuple[PlayMatcher, float]:
+        """Loop in play-along: a press near the wrap can be for the other pass. Just before the
+        wrap: an early press for the first notes of the next pass; just after: a late press for
+        the last notes of the pass before. The nearer matching note wins. Returns (matcher, beat)."""
+        assert self.play is not None
+        length = self.range_end - self.range_start
+        wb = config.PLAY_WINDOW_S * self.rate
+        other = None
+        if self._prev is not None and b < self.range_start + wb + EPS:
+            other = (self._prev, b + length)
+        elif self.loop and self.running and b > self.range_end - wb - EPS:
+            if self._next is None:
+                self._next = self._new_play()
+            other = (self._next, b - length)
+        if other is None:
+            return self.play, b
+        mine = self.play.candidate_err(pitch, b, self.rate)
+        theirs = other[0].candidate_err(pitch, other[1], self.rate)
+        if theirs is not None and (mine is None or theirs < mine):
+            return other
+        return self.play, b
+
     # ------------------------------------------------------------------ keyboard output
 
     def _select_app_notes(self) -> list[dict]:
-        """Notes that the app plays: watch = all; wait = the other hand (if accompany is on)."""
+        """Notes that the app plays: watch = all; wait and play = the other hand (if accompany is on)."""
         song = self.song
         assert song is not None
         if self.mode == "watch":
@@ -534,11 +751,17 @@ class Practice:
             "range": [self.range_start, self.range_end], "section": self.section, "loop": self.loop,
             "count_in": self.count_in, "passes": self.passes, "wrong": self.wrong,
             "accompany": self.accompany, "output": self.output,
+            "stop_beat": self.stop_beat, "lead_to": self.lead_to, "span": list(self.span) if self.span else None,
+            "adapt": self.adapt_on, "loop_step": self.loop_step,
         }
 
 
 def msgs_then(a: list, b: list) -> list:
     return a + b
+
+
+def _cap_log(log: dict) -> dict:
+    return {"notes": log["notes"][:config.PLAY_LOG_MAX], "extras": log["extras"][:config.PLAY_LOG_MAX]}
 
 
 def _check_breaks(breaks, start: float, end: float) -> list[tuple[float, str]]:

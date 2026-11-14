@@ -134,11 +134,12 @@ def course_path() -> Path:
     return base_path() / "data" / "course"
 
 
-# "Song done" (PLAN 8.3: 100% speed and a score of 80 or more). Phase 3 has no play-along score
-# (Phase 4), so the score is the wait-mode accuracy: the % of stops where the first key was right.
-# riyaz/course.py song_done() is the one place to change when the Phase 4 score comes.
+# "Song done" (PLAN 8.3: 100% speed and a score of 80 or more). Phase 4: the score is the
+# play-along score (0-100). Level 1 songs (wait mode first, the user is a beginner) are also done
+# with a wait-mode run (% of stops where the first key was right). riyaz/course.py song_done().
 SONG_DONE_SPEED = 1.0
 SONG_DONE_SCORE = 80
+WAIT_DONE_MAX_LEVEL = 1  # a wait-mode run can finish a ladder song of this level or lower
 SKILL_TRIES = 3  # a skill moment passes after 3 correct tries (PLAN 8.2)
 MAX_COURSE_LEVEL = 3  # levels with content in this version
 
@@ -160,3 +161,71 @@ STREAK_FREEZES_PER_WEEK = 1  # PLAN 9.2: one missed day each week does not break
 NOTIFY_TEXT = "Time for your Riyaz."
 NOTIFY_TIME_DEFAULT = "19:00"
 NOTIFY_CHECK_S = 30.0
+
+# --- Play-along matcher and scores (PLAN 6.4, Phase 4) ------------------------------------
+# Windows are real time (seconds) at the current speed: the expected time of a note is its beat
+# on the song clock (which runs at the set speed). A press inside PLAY_WINDOW_S of a note with the
+# same key matches the earliest unmatched note (the nearest one when the earliest is more than
+# PLAY_GOOD_S away and a later same-key note is within PLAY_GOOD_S; matcher.PlayMatcher._candidate).
+PLAY_PERFECT_S = 0.05
+PLAY_GOOD_S = 0.12
+PLAY_WINDOW_S = 0.25  # late / early; outside = missed (and the press is an extra note)
+PLAY_NEIGHBOR = 2  # an extra note 1 or 2 keys from an expected note = a wrong note (likely slip)
+PLAY_SHORT_RATIO = 0.6  # "short": held less than 60% of the length ...
+PLAY_SHORT_MIN_BEATS = 1.0  # ... for notes of 1 beat or longer
+PLAY_STOP_GAP_S = 2.0  # no key for this long while notes were missed = the user stopped
+PLAY_LOG_MAX = 4000  # notes in the run log of practice_end (feedback, preview)
+# Total score = accuracy x (0.6 + 0.25 x timing + 0.15 x length), timing and length as 0-1.
+SCORE_WEIGHTS = (0.6, 0.25, 0.15)
+STARS = (90, 70)  # 3 stars from 90, 2 from 70, else 1
+
+# --- Feedback: live tips and after-run findings (PLAN 7.1, 7.2) ---------------------------
+TIP_INTERVAL_S = 4.0  # at most one tip each 4 seconds
+TIP_EARLY_RUN = 3  # "Wait for the click." after 3 early notes in a row
+TIP_SHORT_RUN = 2  # "Keep the key down longer." after 2 short notes in a row
+FINDINGS_MAX = 3
+HARD_SPOT_ERRORS = 2  # >= 2 errors in the same group of clicks ...
+HARD_SPOT_RUNS = (2, 3)  # ... in 2 of the last 3 runs
+RUSH_MS = -40.0  # mean timing error below this (over >= RUSH_MIN_NOTES notes) = rushing
+DRAG_MS = 60.0  # mean timing error above this = dragging
+RUSH_MIN_NOTES = 8
+HAND_GAP = 20.0  # one hand's accuracy 20 points lower = hand problem
+COORD_ALONE = 85.0  # each hand alone >= 85 ...
+COORD_BOTH = 70.0  # ... and both hands < 70 = coordination
+MOVE_NOTES = 2  # the notes right after a hand position change
+MOVE_MIN_ERRORS = 2
+CHORD_MIN_TIMES = 2  # keys together with a missing key >= 2 times
+UNEVEN_MIN_NOTES = 8
+UNEVEN_SD = 15.0  # velocity SD (0-127) without a touch range from the setup
+UNEVEN_SD_SHARE = 0.25  # with the setup touch range: SD > 25% of the range
+SHORT_LENGTH_SCORE = 60.0  # length score below this = "short notes"
+SLIP_MIN = 3  # wrong neighbor keys: at least 3 and ...
+SLIP_SHARE = 0.05  # ... at least 5% of the notes
+LOOP_SLOW_SPEED = 0.6  # "Practice this part slowly" (loop at 60% speed)
+
+# --- Automatic adapt (PLAN 7.3) -----------------------------------------------------------
+ADAPT_RUNS = 3
+ADAPT_FAIL = 60  # 3 runs below 60 in a row: speed - 15 points (not below 40%)
+ADAPT_CLEAN = 90  # 3 runs of 90 or more: speed + 5 (or + 10 when all 3 are >= 95), up to 100%
+ADAPT_DOWN = 0.15
+ADAPT_UP = 0.05
+ADAPT_UP_BIG = 0.10
+ADAPT_UP_BIG_SCORE = 95
+ADAPT_MIN_SPEED = 0.40
+LEARNED_SCORE = 85  # whole song at 100% with >= 85 = "learned": spaced repetition starts
+LOOP_STEP = 0.05  # PLAN 6.3 Loop: +5% after 3 clean runs
+
+# --- Spaced repetition and skill model (PLAN 9.3, 9.4) ------------------------------------
+REVIEW_GOOD = 85  # score >= 85: interval x 2
+REVIEW_OK = 60  # 60-84: same interval; < 60: 1 day
+REVIEW_FIRST_DAYS = 1
+SKILL_HISTORY = 20  # the last 20 related results of each skill
+SKILL_ALPHA = 0.3  # newer results count more (moving average)
+
+# --- Latency calibration: "tap with the click" (PLAN 4 Timing, review fix 4) ---------------
+TAP_CLICKS = 8
+TAP_INTERVAL_S = 0.75  # 80 clicks a minute
+TAP_LEAD_S = 1.0  # time before the first click
+TAP_MIN_TAPS = 5  # at least 5 of the 8 clicks need a key press
+TAP_MAX_SPREAD_S = 0.08  # median distance from the median: more = the taps were not even
+TAP_MAX_S = 0.30  # the stored offset is 0-300 ms

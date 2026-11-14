@@ -11,6 +11,7 @@ import { Modal, Terms } from "/static/js/terms.js";
 import { LearnScreen, WordsScreen } from "/static/js/course.js";
 import { BasicsScreen } from "/static/js/basics.js";
 import { TodayScreen } from "/static/js/today.js";
+import { ProgressScreen } from "/static/js/progress.js";
 
 const $ = (id) => document.getElementById(id);
 const link = new Link();
@@ -34,6 +35,7 @@ const ICONS = {
   setup: '<path d="M9 7V3M15 7V3"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   about: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  progress: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
 };
 
 const NAV = [
@@ -41,6 +43,7 @@ const NAV = [
   { id: "today", label: "Today", icon: "today" },
   { id: "learn", label: "Learn", icon: "learn" },
   { id: "songs", label: "Songs", icon: "songs" },
+  { id: "progress", label: "Progress", icon: "progress" },
   { id: "words", label: "Words", icon: "words" },
   { id: "play", label: "Free play", icon: "play" },
   { id: "setup", label: "Setup", icon: "setup" },
@@ -81,12 +84,13 @@ function show(screen) {
   for (const b of document.querySelectorAll(".nav-item")) b.classList.toggle("active", b.dataset.screen === navId);
   $("page-title").textContent = SUB_SCREENS[screen]?.title || NAV.find((n) => n.id === screen)?.label || "";
   if (screen === "about") updateDelayText();
-  if (screen === "settings") loadHabitSettings();
+  if (screen === "settings") { loadHabitSettings(); loadTapSetting(); }
   if (screen === "songs") songsScreen.load();
   if (screen === "practice") practice.show();
   if (screen === "import") importScreen.show();
   if (screen === "today") today.show();
   if (screen === "learn") learn.load();
+  if (screen === "progress") progressScreen.show();
   if (screen === "words") terms.load().then(() => words.render());
   if (screen === "basics") basics.show();
   renderSessionPill();
@@ -215,6 +219,8 @@ const today = new TodayScreen({
   onTick: (text) => { sessionText = text; renderSessionPill(); },
 });
 window.riyaz.today = today;
+const progressScreen = new ProgressScreen({ api, terms });
+window.riyaz.progress = progressScreen;
 window.riyaz.learn = learn;
 window.riyaz.basics = basics;
 window.riyaz.terms = terms;
@@ -689,6 +695,93 @@ function renderCalibSummary() {
   if (c.velocity_range) parts.push(`Soft and loud: done (${c.velocity_range[0]} to ${c.velocity_range[1]}).`);
   $("calib-summary").textContent = parts.join(" ");
 }
+
+// ------------------------------------------------------------------ settings: tap with the click
+// Latency calibration (PLAN 4 Timing, riyaz/tapcheck.py). The server gives the click times (server
+// clock); the page plays them on the Mac (clock offset from the ping/pong sync). The user presses
+// any key with each click; the server finds the median delay and Play along takes it away.
+
+const tap = { running: false, timers: [], n: 0 };
+
+function tapDots(count, now = -1, tapped = 0) {
+  const box = $("tap-dots");
+  box.innerHTML = "";
+  for (let i = 0; i < count; i++) {
+    const d = document.createElement("span");
+    d.className = "tap-dot" + (i < tapped ? " tapped" : "") + (i === now ? " now" : "");
+    box.appendChild(d);
+  }
+}
+
+function tapStatus(text, tone = "") {
+  const el = $("tap-status");
+  el.textContent = text;
+  el.className = "tap-status" + (tone ? ` ${tone}` : "");
+}
+
+function renderTapNow(st) {
+  $("tap-now").textContent = st && st.done ? `Correction now: ${Math.round(st.offset_ms)} ms.` : "No correction yet.";
+  $("tap-reset").disabled = !(st && st.done);
+}
+
+async function loadTapSetting() {
+  const st = await api("/api/settings/latency").catch(() => null);
+  renderTapNow(st);
+  if (!tap.running) tapDots(8);
+}
+
+async function tapStart() {
+  if (tap.running) return;
+  await piano.start().catch(() => false); // sound starts in this click
+  if (!piano.running) return tapStatus("The app cannot play the click. Turn on the Mac sound and try again.", "bad");
+  if (link.serverNow() === null) return tapStatus("The app is not ready. Wait a moment and try again.", "bad");
+  let plan;
+  try {
+    plan = await api("/api/settings/latency/start", {});
+  } catch (e) {
+    return tapStatus(e.message, "bad");
+  }
+  tap.running = true;
+  tap.n = 0;
+  $("tap-start").disabled = true;
+  tapDots(plan.clicks.length);
+  tapStatus("Listen. Press any key with each click.");
+  const sNow = link.serverNow();
+  const aNow = piano.audioNow();
+  plan.clicks.forEach((t, i) => {
+    piano.clickAt(aNow + (t - sNow), i === 0);
+    tap.timers.push(setTimeout(() => tapDots(plan.clicks.length, i, tap.n), Math.max(0, (t - sNow) * 1000)));
+  });
+  tap.timers.push(setTimeout(tapFinish, Math.max(0, (plan.end - sNow) * 1000 + 300)));
+  tap.count = plan.clicks.length;
+}
+
+async function tapFinish() {
+  tap.timers.forEach(clearTimeout);
+  tap.timers = [];
+  const r = await api("/api/settings/latency/finish", {}).catch((e) => ({ ok: false, text: e.message }));
+  tap.running = false;
+  $("tap-start").disabled = false;
+  $("tap-start").textContent = "Do the check again";
+  tapDots(tap.count || 8, -1, Math.min(tap.n, tap.count || 8));
+  tapStatus(r.text || "", r.ok ? "good" : "bad");
+  renderTapNow(r);
+}
+
+link.on("tapcheck_tap", (e) => {
+  if (!tap.running) return;
+  tap.n = e.n;
+  const now = [...document.querySelectorAll("#tap-dots .tap-dot")].findIndex((d) => d.classList.contains("now"));
+  tapDots(tap.count || 8, now, Math.min(tap.n, tap.count || 8));
+});
+
+window.riyaz.tap = { state: tap, dots: tapDots, status: tapStatus, now: renderTapNow, load: loadTapSetting }; // checks
+$("tap-start").addEventListener("click", tapStart);
+$("tap-reset").addEventListener("click", async () => {
+  const st = await api("/api/settings/latency/reset", {}).catch(() => null);
+  renderTapNow(st);
+  tapStatus("The app removed the correction. Play along now uses the key times as they come.");
+});
 
 // ------------------------------------------------------------------ settings
 
