@@ -23,18 +23,21 @@ OWN = {"Origin": "http://127.0.0.1:8020"}
 
 def test_content_loads_and_refers_correctly():
     c = course.content()
-    assert [lv["level"] for lv in c["levels"]] == list(range(1, config.MAX_COURSE_LEVEL + 1)) == list(range(1, 9))
-    ladder = [e["song_id"] for e in course.ladder_entries()]
+    assert [lv["level"] for lv in c["levels"]] == list(range(1, config.MAX_COURSE_LEVEL + 1)) == list(range(1, 11))
+    ladder = [e["key"] for e in course.ladder_entries()]
     assert ladder == ["mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle", "au-clair-de-la-lune", "frere-jacques",
                       "london-bridge", "ode-to-joy-left-hand", "twinkle-twinkle-left-hand", "frere-jacques-both-hands",
                       "jingle-bells", "when-the-saints", "yankee-doodle", "happy-birthday", "amazing-grace", "clementine",
                       "canon-in-d", "pop-loop", "minuet-in-g", "ode-to-joy-full", "scarborough-fair", "greensleeves",
-                      "aura-lee", "vande-mataram"]
+                      "aura-lee", "vande-mataram",
+                      # Phase 6: Level 9 and the Level 10 tasks (lead sheet, a new key family)
+                      "fur-elise", "amazing-grace-smooth", "happy-birthday#lead", "clementine#lead", "pop-loop#lead",
+                      "when-the-saints#transpose"]
     # PLAN 7.4 unlock table: the levels of the terms.
     levels = {t["id"]: t["level"] for t in c["terms"]}
     assert levels == {"finger_number": 1, "middle_c": 1, "hand_position": 1, "beat": 2, "rest": 2, "tempo": 2,
                       "bar": 3, "interval": 3, "sharp_flat": 4, "chord": 5, "major_minor": 5, "progression": 6,
-                      "scale": 7}
+                      "scale": 7, "arpeggio": 9, "dynamics": 9, "inversion": 9, "lead_sheet": 10}
     # Every term has an unlock lesson in this version (Phase 5b: Levels 4-7 too).
     for t in c["terms"]:
         assert t["unlocked_by"] is not None, t["id"]
@@ -505,7 +508,7 @@ def test_skip_forward_warns_and_sets_the_level(client):
     assert r["now"] == 3
     st = c.get("/api/course").json()
     assert st["level"] == 3 and st["bar_lines"] and st["levels"][2]["open"] and st["levels"][1]["open"]
-    assert c.post("/api/course/skip", json={"level": 9}, headers=OWN).status_code == 400
+    assert c.post("/api/course/skip", json={"level": 11}, headers=OWN).status_code == 400
     # Level 3 terms stay locked until their skill moment.
     assert not {t["id"]: t for t in c.get("/api/course/terms").json()["terms"]}["bar"]["unlocked"]
 

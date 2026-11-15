@@ -16,6 +16,11 @@ Daily session (default 20 minutes; 10, 15, 20 or 30): 4 blocks.
 Practice time: the time between 2 key presses counts when it is shorter than ACTIVITY_GAP_S.
 A day counts for the streak with PRACTICE_DAY_SECONDS of practice or a finished session.
 Streak freeze: one missed day in each week (Monday-Sunday) does not break the streak.
+
+Phase 6: a ladder task (riyaz/course.py ``task``) changes the song block. "lead": one lead-sheet
+run (play along with the tune, the user makes the left hand). "transpose": the song in a new key
+family (the saved transposed song, else a new one in the easiest key). The optional pedal moment
+is never a block and never needed (the user has no foot switch now).
 """
 
 from __future__ import annotations
@@ -281,6 +286,15 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
         song = get_song(cur["song_id"])
     else:
         entry = ladder_entry(song["id"])
+    task = (entry or {}).get("task")
+    if task == "transpose":
+        from . import transpose
+
+        try:
+            song = transpose.ensure_version(song)
+        except (transpose.TransposeError, songs.SongError, OSError):
+            log.exception("Cannot make the song in a new key family")
+            task = None
     hands = _hands_for(song, entry, level)
     progress = store.song_progress()
     hard = hardest_part(progress.get(song["id"]))
@@ -296,9 +310,14 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
     # Wait mode first; when the keys are learned (step 1), the whole song is played along.
     keys_ok = bool((progress.get(song["id"]) or {}).get("keys_ok"))
     song_steps = []
-    if hard is not None:
-        song_steps.append({"section": hard, "speed": 0.6, "label": "hard_part", "mode": "wait"})
-    song_steps.append({"section": None, "speed": None, "label": "whole", "mode": "play" if keys_ok else "wait"})
+    if task == "lead":
+        # Lead-sheet task: one run with the tune and the chord names (no wait mode: the left hand
+        # is the user's own part). The user's normal play-along speed.
+        song_steps.append({"section": None, "speed": None, "label": "whole", "mode": "play", "lead": True})
+    else:
+        if hard is not None:
+            song_steps.append({"section": hard, "speed": 0.6, "label": "hard_part", "mode": "wait"})
+        song_steps.append({"section": None, "speed": None, "label": "whole", "mode": "play" if keys_ok else "wait"})
 
     # Review: a done song (not today's song), the one played least recently; its hardest part.
     done = [(r.get("last_played") or 0, sid2) for sid2, r in progress.items() if r["done"] and sid2 != song["id"]
@@ -350,7 +369,7 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
          "pattern": warm, "focus": focus, "hands": warm_hands},
         {"kind": "song", "minutes": mins["song"], "song_id": song["id"], "title": song["title"], "hands": hands,
          "steps": song_steps, "hard_part": hard, "level": entry["level"] if entry else song.get("level"),
-         "ladder": entry is not None},
+         "ladder": entry is not None, "task": task},
         {"kind": "review", "minutes": mins["review"], "song_id": review_song["id"], "title": review_song["title"],
          "hands": review_hands, "section": review_part, "why": review_why, "mode": review_mode,
          "due": review_due},

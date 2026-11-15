@@ -8,6 +8,80 @@
 - **Stage: Phase 5 review fixes** done (2026-11-14), see below. Not committed. **Next:** user review, then Phase 6.
 - **Stage: Phase 5b** done (2026-11-14): course Levels 4-8 (13 songs, 15 skill moments, term unlocks), intuition exercises (8 games + "Find the key"), "Ear games" page, daily-session ear game. Not committed. **Next:** user review of Phase 5 (5a + 5b), then Phase 6.
 
+- **Stage: Phase 6** done (2026-11-14): Levels 9-10, lead sheet, new key family, dynamics, optional foot switch, recorder, weekly coach, release flow. Not committed. **Next:** user review and the manual steps below (install from a release, connect the keyboard).
+- **Stage: Phase 6 review fixes** done (2026-11-14), see below. Not committed.
+
+## Phase 6 review fixes (2026-11-14)
+
+Details and reasons: `DECISIONS.md` "Phase 6 review fixes". Not committed.
+
+- Lead sheet: unique (span, note name) pairs, a span counts only with its root / slash bass or 2 different keys of the name, each wrong name takes away one right name, `LEAD_LEFT_PASS = 70` gate. A range with no names: the tune alone.
+- Key names in plain words ("G (happy sound)") until "major" is unlocked; transposed titles "X (in G)"; transposed song cards say "New key family".
+- Dynamics only from Level 9 or after `melody_louder`; no tips when the touch values do not spread (touch response off).
+- Recorder: keyboard playback is in `stop_others`; leaving Free play stops and saves a recording; quit saves an open recording; `recordings/index.json` for the list.
+- install.sh: `main "$@"` on the last line, INT/TERM trap exits 130, `--help` from a heredoc.
+- Foot switch only on CC 64 >= 64; Settings "Forget the foot switch".
+- Coach: titles cannot make term marks; plural and capital plain words; no redirects; one deadline per request; "Play mode" (the UI word).
+- Personal paths removed from PLAN.md, DECISIONS.md, PROGRESS.md.
+- Tests: weak asserts fixed (`test_install.py` is_dir, the text checksum now installs; `test_phase6.py` `or` branches).
+
+### Results (2026-11-14)
+
+`uv run pytest -q`: **580 passed** (about 236 s, with the CoreMIDI tests; 34 new). `make build-mac`: OK, **Riyaz.app 286 MB**.
+
+| Check | Result |
+|---|---|
+| Scorer simulation (1, 2 or 3 keys hammered for the whole song; best key choice) | happy-birthday left 56 → total 79, clementine 60 → 79, pop-loop 38 → 75 (none done); all white keys each beat / 12-key cluster: left 0 → total 60 |
+| Honest patterns (root, root + fifth, full, inversion, broken, root repeated) | left 100 on happy-birthday, clementine, pop-loop |
+| Lead sheet, real CoreMIDI, Level 10 (source app, one server per run) | happy-birthday **100** (left 100, 9/9), clementine **100** (5/5), pop-loop **100** (16/16); wrong keys: total **60**, left **0**, not done |
+| Lead sheet, frozen app (`dist/Riyaz.app --server`) | happy-birthday PASS (100) |
+| Daily session, Level 9, no pedal (real CoreMIDI) | 4/4 blocks (Für Elise whole 100%, ear game add_chords 100), new skill "Keys of a key group one by one", `/api/pedal` → `{"seen": false}` |
+
+All runs used `RIYAZ_PORT_FILTER` "Riyaz P6fix runs" and temp data folders in the scratchpad; the real "USB MIDI Interface" was never opened.
+
+Open (seen during the checks, not changed): a second fake-player process with the same port name in the same server run does not connect (the app does not see the port close and open again); at the end, `MidiService._list_ports` once logged `AttributeError: 'NoneType' object has no attribute 'startswith'` (a port with no name while CoreMIDI closes it). `riyaz/midi_io.py` is not part of Phase 6.
+
+## Phase 6 (2026-11-14): Levels 9-10, lead sheet, transpose, dynamics, pedal, recorder, coach, release
+
+Details and reasons: `DECISIONS.md` "Phase 6". Not committed, no push, no remote, no GitHub release.
+
+- Course: Level 9 "Smooth and soft" (Für Elise opening — Mutopia source; Amazing Grace with smooth chords), Level 10 "Your own left hand" (lead sheets: Happy Birthday, Clementine, Pop loop; When the Saints in a new key family). Ladder `task` entries with own progress keys (`<id>#lead`, `<id>#transpose`). 8 skill moments, 4 terms (arpeggio, dynamics, inversion, lead sheet). `MAX_COURSE_LEVEL = 10`.
+- New modules: `riyaz/leadsheet.py`, `riyaz/transpose.py`, `riyaz/dynamics.py`, `riyaz/recorder.py`, `riyaz/coach.py`. Practice: `lead=True` mode, `practice_lead` events; fix: play-along now keeps the real key velocity (`vel`).
+- Foot switch: pedal moment optional and hidden until the first real CC 64 (`pedal.seen`); drill steps `pedal: down|up`; practice pill hidden until CC 64.
+- UI: practice "Make my own left hand" + names on the falling notes, "Play in a new key family" dialog, end card lines (left hand, soft and loud); Learn task lines; Today lead step; Free play recorder card; Progress "This week" card + "Ask the coach"; Settings "Weekly coach" (off by default). Save dialog for MIDI files via `js_api` (main.py, DocKit pattern).
+- Release: `install.sh` (~/Applications or /Applications, SHA-256 check, quarantine removed on the app only, `--zip FILE|file://`, `--sha256`, `--dest`, `--base`, `--version`, `--no-open`), `make release-zip VARIANT=full|base`, `make release-mac VERSION=...` → `tools/release.sh` (prints the gh command; uploads only with `RELEASE_YES=1`).
+- Tools: `fake_player.py --lead [--lead-wrong]`, `--vel-r/--vel-l`; sessions do the lead step; drills send CC 64 only with `pedal=True`.
+- Tests: `tests/test_phase6.py` (29), `tests/test_install.py` (5), 1 CoreMIDI test; updated course/ladder/songs tests for Levels 9-10.
+
+### Results (2026-11-14)
+
+`uv run pytest -q`: **546 passed** (about 236 s, with the CoreMIDI tests; 47 new or changed). `make release-zip VARIANT=full` (= `make build-mac` + zip): OK, **Riyaz.app 286 MB**, zip 113 MB.
+
+| Check | Result |
+|---|---|
+| Level 9 songs, wait mode (real CoreMIDI, source app) | fur-elise PASS (47 stops, 1 wrong key, 0 advanced), amazing-grace-smooth PASS (35 stops) |
+| Level 9 songs, play-along | fur-elise **100** (0 missed, mean error 0.4 ms), amazing-grace-smooth **100** (0.7 ms) |
+| Lead sheet (tune + own left hand) | happy-birthday **100** (left hand 100: 9/9 names, 27/27 keys), clementine **100** (5/5), pop-loop **100** (16/16); wrong left-hand keys: total **60**, left hand **0** (not done) |
+| Transpose | When the Saints F → G major (`my-when-the-saints-in-g-major`): wait PASS (38 stops, 1 wrong, 0 advanced), play-along **100**, task `when-the-saints#transpose` done |
+| Dynamics | normal velocities: balance OK, Für Elise soft parts OK (score 100); left hand 110 / tune 70: "Play the tune louder than the left hand."; Für Elise at 115: + "Play Part 1 softly." |
+| Recording → MIDI → importer | 6 keys recorded from the virtual port (vel 77); .mid 112 bytes; `/api/import/midi` → song with pitches 60 62 64 65 67 67, bpm 120, vel 77 |
+| Daily session, Level 9, no pedal | 4/4 steps (warm-up, Für Elise with the arpeggio moment, review, ear game 100); no pedal moment |
+| Daily session, Level 10, no pedal | 4/4 steps (warm-up, Happy Birthday lead sheet 100 / left hand 100, review, find the tune 100) |
+| WKWebView (hidden window, dark + light) | 34/34 checks, no JS errors: Learn tasks, lead switch + names + hidden left-hand notes, lead moment before the start, new key dialog → G major song, recorder list, Progress week card, Settings coach (off), pedal pill only after CC 64. the scratchpad folder (`phase6/shots/`) |
+| install.sh with the real release zip (quarantined copy, `file://` URL) | installed in the scratchpad folder, checksum OK, 0 quarantine attributes left on the app; a bad checksum: rejected, nothing installed |
+| Installed (frozen) app, `--server`, virtual port | Für Elise wait PASS (47 stops), Happy Birthday lead sheet 100, recorder and coach routes OK |
+
+All runs used `RIYAZ_PORT_FILTER` "Riyaz P6 ..." with unique virtual port names and temp data folders in the scratchpad; the real "USB MIDI Interface" was never opened (the app listed no inputs at start).
+
+### Open issues (Phase 6)
+
+- Default release file: full (286 MB app, 113 MB zip) or base (about 43 MB) — the user decides (`DECISIONS.md`).
+- Needs manual test: the installed release app with the real keyboard (Setup → Find my keyboard), and the Save dialog for MIDI files in the app window (not clicked in the hidden window).
+- Danny Boy (PLAN Level 9) not added (no checked source); Amazing Grace with smooth chords instead.
+- Dynamics in lead-sheet runs checks only the tune (the user's own left-hand keys are not compared for loudness).
+- Ollama coach: never run against a real Ollama (not installed by decision); the model name `llama3.2:3b` is only a default.
+- The pedal moment was tested with a fake CC 64 only (no foot switch here).
+
 ## Phase 5 review fixes (2026-11-14)
 
 Details and reasons: `DECISIONS.md` "Phase 5 review fixes". Not committed.

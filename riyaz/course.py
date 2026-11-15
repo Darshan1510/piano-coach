@@ -1,4 +1,4 @@
-"""Course: keyboard basics, skill moments, song ladder Levels 1-8 and music terms (PLAN 7.4, 8).
+"""Course: keyboard basics, skill moments, song ladder Levels 1-10 and music terms (PLAN 7.4, 8).
 
 Content is JSON in data/course/ (PLAN 8.5): terms.json, basics.json, skills.json, ladder.json,
 intuition.json (the intuition exercises of PLAN 10; riyaz/intuition.py runs them).
@@ -13,6 +13,16 @@ Rules:
   right the first time >= 80): the user is a beginner (DECISIONS.md Phase 4).
 - A skill moment unlocks its term (PLAN 8.2, 7.4). Keyboard basics tasks unlock "middle C" and
   "finger number".
+
+Phase 6 (Levels 9-10):
+- A ladder entry can have a ``task``: "lead" (lead-sheet mode: the tune + the chord names, the user
+  makes the left hand; riyaz/leadsheet.py) or "transpose" (the song in a new key family;
+  riyaz/transpose.py). Its progress key is "<song id>#<task>" (entry_key), so the same song can be
+  a normal entry at Level 5 and a task at Level 10.
+- A skill can be ``optional`` and can ``need`` "pedal" (the foot switch, MIDI CC 64). A pedal
+  moment appears only after the keyboard sent a CC 64 (setting "pedal.seen"); it is never needed
+  for a song, a level, the daily session or skip forward. The user has no pedal now: the course
+  works the same without it.
 """
 
 from __future__ import annotations
@@ -160,6 +170,8 @@ def content() -> dict:
         for entry in lv["songs"]:
             if entry["song_id"] not in builtin:
                 raise ValueError(f"ladder: unknown song {entry['song_id']}")
+            if entry.get("task") is not None and entry["task"] not in TASKS:
+                raise ValueError(f"ladder: unknown task {entry['task']}")
             for sk in entry["skills"]:
                 if sk["id"] not in skills:
                     raise ValueError(f"ladder: unknown skill {sk['id']}")
@@ -220,17 +232,48 @@ def basics_tasks() -> list[dict]:
     return [t for st in content()["basics"]["steps"] for t in st["tasks"]]
 
 
+TASKS = ("lead", "transpose")
+
+
+def entry_key(e: dict) -> str:
+    """The progress key of a ladder entry: the song id, or "<song id>#<task>" for a task."""
+    return f"{e['song_id']}#{e['task']}" if e.get("task") else e["song_id"]
+
+
 def ladder_entries() -> list[dict]:
     """Every ladder song with its level, in order."""
     out = []
     for lv in content()["levels"]:
         for i, e in enumerate(lv["songs"]):
-            out.append({**e, "level": lv["level"], "index": i})
+            out.append({**e, "level": lv["level"], "index": i, "key": entry_key(e)})
     return out
 
 
 def ladder_entry(song_id: str) -> dict | None:
-    return next((e for e in ladder_entries() if e["song_id"] == song_id), None)
+    """The normal (not a task) ladder entry of a song."""
+    entries = [e for e in ladder_entries() if e["song_id"] == song_id]
+    return next((e for e in entries if not e.get("task")), None)
+
+
+def task_entry(song_id: str, task: str | None) -> dict | None:
+    if not task:
+        return ladder_entry(song_id)
+    return next((e for e in ladder_entries() if e["song_id"] == song_id and e.get("task") == task), None)
+
+
+def entry_by_key(key: str) -> dict | None:
+    return next((e for e in ladder_entries() if e["key"] == key), None)
+
+
+def run_task(song: dict, run: dict) -> tuple[str | None, str]:
+    """(task, base song id) of a run: "lead" for a lead-sheet run, "transpose" for a run of a
+    transposed song (base = its source song), else (None, the song id)."""
+    if run.get("mode") == "play" and (run.get("lead") or run.get("task") == "lead"):
+        return "lead", song["id"]
+    meta = song.get("version_of")
+    if isinstance(meta, dict) and meta.get("kind") == "transpose" and isinstance(meta.get("id"), str):
+        return "transpose", meta["id"]
+    return None, song["id"]
 
 
 def run_score(run: dict) -> float:
@@ -291,7 +334,7 @@ class Course:
     def level_done(self, level: int, done: set[str] | None = None) -> bool:
         done = self.songs_done() if done is None else done
         lv = next((x for x in content()["levels"] if x["level"] == level), None)
-        return lv is not None and all(e["song_id"] in done for e in lv["songs"])
+        return lv is not None and all(entry_key(e) in done for e in lv["songs"])
 
     def level_floor(self) -> int:
         v = self.store.course_get("level_floor", 1)
@@ -349,21 +392,37 @@ class Course:
                 "text": text, "demo": s["demo"],
                 "steps": s["steps"], "tries": s["tries"], "hands": s["hands"], "unlocks": s.get("unlocks"),
                 "unlocks_term": term["term"] if term else None,
+                "optional": bool(s.get("optional")), "needs": s.get("needs"),
                 "done": s["id"] in self.store.skills_done()}
 
-    def pending_moments(self, song_id: str) -> list[dict]:
-        """Skill moments of a ladder song that the user has not passed (PLAN 8.2)."""
-        entry = ladder_entry(song_id)
+    def pedal_seen(self) -> bool:
+        """The keyboard sent a foot switch message (CC 64) one time (riyaz/server.py saves it)."""
+        return bool(self.store.get("pedal.seen", False))
+
+    def skill_shown(self, skill_id: str) -> bool:
+        """A pedal moment is shown only when the keyboard has a foot switch (Phase 6)."""
+        s = self.skill(skill_id) or {}
+        return s.get("needs") != "pedal" or self.pedal_seen()
+
+    def pending_moments(self, song_id: str, task: str | None = None) -> list[dict]:
+        """Skill moments of a ladder song that the user has not passed (PLAN 8.2). A transposed
+        song has the moments of its "transpose" task."""
+        if task is None:
+            song = songs.get(song_id)
+            meta = (song or {}).get("version_of")
+            if isinstance(meta, dict) and meta.get("kind") == "transpose":
+                song_id, task = str(meta.get("id")), "transpose"
+        entry = task_entry(song_id, task)
         if entry is None:
             return []
         done = self.store.skills_done()
         out = []
         for sk in entry["skills"]:
-            if sk["id"] in done:
+            if sk["id"] in done or not self.skill_shown(sk["id"]):
                 continue
             skill = self.skill_public(sk["id"])
             out.append({"id": sk["id"], "at_beat": float(sk["at_beat"]), "resume_beat": float(sk["resume_beat"]),
-                        "hands": skill["hands"], "skill": skill})
+                        "hands": skill["hands"], "skill": skill, "optional": bool(skill.get("optional"))})
         return sorted(out, key=lambda m: m["at_beat"])
 
     def complete_skill(self, skill_id: str, session_id: int | None = None) -> dict:
@@ -416,7 +475,7 @@ class Course:
                 break
             for e in lv["songs"]:
                 for sk in e["skills"]:
-                    if sk["id"] not in done:
+                    if sk["id"] not in done and not self.skill(sk["id"]).get("optional"):
                         needed.append(plain_text(self.skill(sk["id"])["name"], have))
         return {"level": level, "needed": needed, "basics": not self.basics_done()}
 
@@ -441,8 +500,18 @@ class Course:
         song = get_song(str(run.get("song_id", "")))
         if song is None:
             return None
-        entry = ladder_entry(song["id"])
-        required = entry["hands"] if entry else songs.hands_of(song)
+        task, base_id = run_task(song, run)
+        entry = task_entry(base_id, task) if task else ladder_entry(song["id"])
+        if task == "lead":
+            required = ["R"]  # the matcher checks the tune; the left hand is the user's own
+        elif task == "transpose":
+            required = entry["hands"] if entry else songs.hands_of(song)
+        else:
+            required = entry["hands"] if entry else songs.hands_of(song)
+        # The progress row: a lead-sheet run has its own row ("<id>#lead"); a transposed song has
+        # its own row (its id) and, when done, the task row of the source ("<source>#transpose").
+        pkey = f"{song['id']}#lead" if task == "lead" else song["id"]
+        task_key = f"{base_id}#transpose" if task == "transpose" else None
         full = run.get("section") is None and not run.get("span")
         part_errors: dict[int, int] = {}
         for e in run.get("errors") or []:
@@ -467,27 +536,39 @@ class Course:
             data["loop_pass"] = True  # not in the run history, findings, adapt or the Progress chart
         if score is not None:
             data.update(score=score, **feedback.run_summary(song, run))
+        if task:
+            data["task"] = task
+        if isinstance(run.get("lead"), dict):
+            data["lead"] = {k: run["lead"].get(k) for k in ("score", "covered", "chords", "cover_pct", "tone_pct", "keys")}
+        if isinstance(run.get("dynamics"), dict):
+            data["dynamics"] = {k: run["dynamics"].get(k) for k in ("score", "balance", "parts")}
         self.store.add_attempt(kind="song", item=song["id"], day=day, t=self.now(), session_id=session_id,
                                hands=run.get("hands"), section=run.get("section"), speed=run.get("speed"),
                                completed=bool(run.get("completed")), stops=run.get("stops"), wrong=run.get("wrong"),
                                accuracy=accuracy, data=data)
         if run.get("loop_pass"):
             return None  # one pass of a repeated part: the attempt only (skill model, history)
-        before = self.store.song_progress(song["id"]).get(song["id"])
+        before = self.store.song_progress(pkey).get(pkey)
         row = self.store.update_song_progress(
-            song["id"], accuracy=accuracy, full=full and bool(run.get("completed")), done=done,
+            pkey, accuracy=accuracy, full=full and bool(run.get("completed")), done=done,
             part_errors=part_errors, t=self.now(),
             score=score["total"] if score is not None and full and run.get("completed") else None,
             keys_ok=not course_song and keys_learned(run, required))
+        if task_key is not None:
+            before = self.store.song_progress(task_key).get(task_key)
+            row = self.store.update_song_progress(
+                task_key, accuracy=accuracy, full=full and bool(run.get("completed")), done=done, part_errors={},
+                t=self.now(), score=score["total"] if score is not None and full and run.get("completed") else None,
+                keys_ok=not course_song and keys_learned(run, required))
         # Learned (PLAN 7.3): whole song at 100% with >= 85 (play-along): schedule the reviews.
         learned_new = False
-        if (score is not None and done and score["total"] >= config.LEARNED_SCORE - EPS
+        if (task != "lead" and score is not None and done and score["total"] >= config.LEARNED_SCORE - EPS
                 and self.store.mark_learned(song["id"], self.now())):
             learned_new = True
             review.add_song(self.store, song, day)
         # A review counts only at 100% speed (or faster) with the ladder hands (the review block's
         # settings); a slow or one-hand run of a learned song does not change the schedule.
-        review_ok = (score is not None and float(run.get("speed") or 0) >= config.SONG_DONE_SPEED - EPS
+        review_ok = (task != "lead" and score is not None and float(run.get("speed") or 0) >= config.SONG_DONE_SPEED - EPS
                      and set(required) <= set(run.get("hands") or []))
         reviews = review.record_sections(self.store, song["id"], data.get("section_scores") or {}, day) \
             if review_ok else []
@@ -500,7 +581,8 @@ class Course:
                 "level_up": level_after > level_before, "rule": rule(), "mode": mode,
                 "score": score, "keys_ok": bool(row.get("keys_ok")), "learned": learned_new,
                 "wait_counts": level_of_song is not None and level_of_song <= config.WAIT_DONE_MAX_LEVEL,
-                "reviewed": [r["item"] for r in reviews]}
+                "reviewed": [r["item"] for r in reviews], "task": task, "key": task_key or pkey,
+                "lead": data.get("lead"), "dynamics": run.get("dynamics")}
 
     # ---- the whole state for the UI
 
@@ -508,7 +590,7 @@ class Course:
         level = self.level()
         done = self.songs_done()
         for e in ladder_entries():
-            if e["level"] == level and e["song_id"] not in done:
+            if e["level"] == level and e["key"] not in done:
                 return e
         return None
 
@@ -526,16 +608,20 @@ class Course:
             n = lv["level"]
             items = []
             for e in lv["songs"]:
-                p = progress.get(e["song_id"], {})
+                key = entry_key(e)
+                p = progress.get(key, {})
                 s = all_songs[e["song_id"]]
-                items.append({"song_id": e["song_id"], "title": s["title"], "hands": e["hands"],
-                              "seconds": round(s["end"] * 60.0 / s["bpm"]), "done": e["song_id"] in done,
+                items.append({"song_id": e["song_id"], "key": key, "task": e.get("task"),
+                              "task_text": render_text(TASK_TEXT[e["task"]], have) if e.get("task") else None,
+                              "title": s["title"], "hands": e["hands"],
+                              "seconds": round(s["end"] * 60.0 / s["bpm"]), "done": key in done,
                               "best": p.get("best_full"), "runs": p.get("runs", 0),
                               "best_score": p.get("best_score"), "keys_ok": bool(p.get("keys_ok")),
                               "learned": bool(p.get("learned")),
-                              "current": bool(cur and cur["song_id"] == e["song_id"]),
+                              "current": bool(cur and cur["key"] == key),
                               "skills": [{"id": sk["id"], "name": plain_text(self.skill(sk["id"])["name"], have),
-                                          "done": sk["id"] in skills_done} for sk in e["skills"]]})
+                                          "done": sk["id"] in skills_done, "optional": bool(self.skill(sk["id"]).get("optional"))}
+                                         for sk in e["skills"] if self.skill_shown(sk["id"])]})
             levels.append({"level": n, "title": render_text(lv["title"], have), "text": render_text(lv["text"], have),
                            "done": self.level_done(n, done),
                            "current": n == level, "open": n <= max(level, floor), "songs": items,
@@ -552,8 +638,17 @@ class Course:
                 "level_floor": floor, "user_level": self.user_level(),
                 "basics": {"done": self.basics_done(), "steps": basics},
                 "levels": levels, "current_song": cur["song_id"] if cur else None,
+                "current_key": cur["key"] if cur else None, "current_task": cur.get("task") if cur else None,
+                "pedal_seen": self.pedal_seen(),
                 "skills_done": sorted(skills_done), "rule": rule(),
                 "bar_lines": level >= 3}
+
+
+# The line under a task entry on the Learn page (term marks, PLAN 7.4).
+TASK_TEXT = {
+    "lead": "Only the tune and the names of the key groups. Make your own left hand.",
+    "transpose": "Play the song in a new key family.",
+}
 
 
 def rule() -> dict:
@@ -585,6 +680,8 @@ def course_texts() -> list[tuple[int, str, str]]:
         out.append((1, f"level {lv['level']} text", lv["text"]))
     for t in c["terms"]:
         out.append((t["level"], f"term {t['id']} card", t["card"]))
+    for task, text in TASK_TEXT.items():
+        out.append((1, f"task {task} text", text))  # visible on the Learn page before the level
     out += _intuition_texts({"exercises": c["intuition"], "results": c["intuition_results"]})
     return out
 

@@ -1,5 +1,5 @@
 {
- "about": "Song ladder (PLAN 8.3), Levels 1-8. A song is done at 100% speed with a score of 80 or more (play along; Level 1 also in wait mode), the whole song, the hands in 'hands'. A level is done when all its songs are done. Each skill moment stops the song at 'at_beat' and the song goes on from 'resume_beat' (PLAN 8.2). Titles use plain words: the user sees them before the unlock.",
+ "about": "Song ladder (PLAN 8.3), Levels 1-10. Phase 6: an entry with 'task' (lead = lead sheet, transpose = a new key family) has its own progress key '<song id>#<task>'. A song is done at 100% speed with a score of 80 or more (play along; Level 1 also in wait mode), the whole song, the hands in 'hands'. A level is done when all its songs are done. Each skill moment stops the song at 'at_beat' and the song goes on from 'resume_beat' (PLAN 8.2). Titles use plain words: the user sees them before the unlock.",
  "levels": [
   {"level": 1, "title": "First songs", "text": "Use your right hand. Your hand stays in one place most of the time.",
    "songs": [
@@ -47,6 +47,8 @@
     {"song_id": "greensleeves", "hands": ["R", "L"], "skills": [{"id": "dadra", "at_beat": 6, "resume_beat": 5}]},
     {"song_id": "aura-lee", "hands": ["R", "L"], "skills": [{"id": "keherwa", "at_beat": 0, "resume_beat": 0}]},
     {"song_id": "vande-mataram", "hands": ["R", "L"], "skills": []}
-   ]}
+   ]},
+  {"level": 9, "title": "Smooth and soft", "text": "Play the keys of a group one by one. Change key groups smoothly. Play the tune louder than the left hand.", "songs": [{"song_id": "fur-elise", "hands": ["R", "L"], "skills": [{"id": "pedal", "at_beat": 2, "resume_beat": 0}, {"id": "arpeggio", "at_beat": 6, "resume_beat": 3}]}, {"song_id": "amazing-grace-smooth", "hands": ["R", "L"], "skills": [{"id": "melody_louder", "at_beat": 2, "resume_beat": 0}, {"id": "inversion", "at_beat": 9, "resume_beat": 6}]}]},
+  {"level": 10, "title": "Your own left hand", "text": "See only the tune and the names of the key groups, and make your own left hand. Play by ear, make up a tune, and play a song in a new key family.", "songs": [{"song_id": "happy-birthday", "task": "lead", "hands": ["R", "L"], "skills": [{"id": "lead_sheet", "at_beat": 2, "resume_beat": 0}]}, {"song_id": "clementine", "task": "lead", "hands": ["R", "L"], "skills": [{"id": "by_ear", "at_beat": 2, "resume_beat": 0}]}, {"song_id": "pop-loop", "task": "lead", "hands": ["R", "L"], "skills": [{"id": "own_tune", "at_beat": 0, "resume_beat": 0}]}, {"song_id": "when-the-saints", "task": "transpose", "hands": ["R", "L"], "skills": [{"id": "new_key", "at_beat": 1, "resume_beat": 0}]}]}
  ]
 }

@@ -203,6 +203,19 @@
       <!-- ===================== Progress (Phase 4): skills, calendar, scores over time ===================== -->
       <section id="screen-progress" class="screen hidden">
         <div class="progress-grid">
+          <div class="card progress-week" id="pg-week">
+            <div class="card-head">
+              <div><div class="card-eyebrow">This week</div><h2 class="today-h" id="pg-week-title">Your week</h2></div>
+              <button id="pg-coach-btn" class="btn btn-sm hidden">Ask the coach</button>
+            </div>
+            <ul id="pg-week-lines" class="pg-week-lines"></ul>
+            <h3 class="habit-cal-title">Tips</h3>
+            <ul id="pg-week-tips" class="pg-week-tips"></ul>
+            <div id="pg-coach" class="pg-coach hidden" role="status" aria-live="polite">
+              <div class="card-eyebrow">Coach</div>
+              <p id="pg-coach-text"></p>
+            </div>
+          </div>
           <div class="card progress-skills">
             <div class="card-eyebrow">Your skills</div>
             <h2 class="today-h">What you can do</h2>
@@ -634,6 +647,11 @@
             <label class="switch hidden" id="pr-adapt-row" title="After 3 hard runs the song gets slower. After 3 good runs it gets faster."><input type="checkbox" id="pr-adapt" checked><span class="switch-track"></span> Change the speed for me</label>
             <label class="switch hidden" id="pr-loopstep-row"><input type="checkbox" id="pr-loopstep" checked><span class="switch-track"></span> Go faster after 3 good runs</label>
             <label class="switch hidden" id="pr-kbsound-row"><input type="checkbox" id="pr-kbsound"><span class="switch-track"></span> Play the song on the keyboard speaker</label>
+            <!-- Level 10 (Phase 6): only the tune and the names; the user makes the left hand. -->
+            <label class="switch hidden" id="pr-lead-row" title="The app shows only the tune and the names of the key groups. You make the left hand."><input type="checkbox" id="pr-lead"><span class="switch-track"></span> Make my own left hand</label>
+            <button id="pr-newkey" class="btn btn-sm hidden" title="Play this song from a new start key.">Play in a new key family</button>
+            <!-- Hidden until the first foot switch message (CC 64): the user has no pedal now. -->
+            <span id="pr-pedal" class="pill hidden" aria-live="polite">Foot switch: up</span>
           </div>
           </div>
           <div class="pr-actions">
@@ -683,6 +701,8 @@
               </div></div>
               <p id="pr-end-text"></p>
               <div id="pr-end-adapt" class="pr-end-adapt hidden" role="status"><span id="pr-end-adapt-text"></span><button id="pr-end-next" class="btn btn-sm hidden"></button></div>
+              <p id="pr-end-lead" class="pr-end-extra hidden"></p>
+              <p id="pr-end-dyn" class="pr-end-extra hidden"></p>
               <p id="pr-end-goal" class="pr-end-goal"></p>
               <div id="pr-findings" class="pr-findings hidden" aria-label="What to practice next"></div>
               <div class="btn-row">
@@ -724,6 +744,22 @@
         <div class="options">
           <label class="switch"><input type="checkbox" id="opt-names" checked><span class="switch-track"></span> Show the name on each white key</label>
           <label class="switch"><input type="checkbox" id="opt-mac-sound"><span class="switch-track"></span> Also play my keys on the Mac speaker</label>
+        </div>
+
+        <!-- Free-play recorder (Phase 6): record, play back, save as a MIDI file. -->
+        <div class="card rec-card" id="rec-card">
+          <div class="card-head">
+            <div><div class="card-eyebrow">Recorder</div><h2 class="today-h">Record what you play</h2></div>
+            <span id="rec-status" class="pill">Not recording</span>
+          </div>
+          <p class="muted">Click "Record", then play. Click "Stop" to keep the recording. The recordings stay on this Mac.</p>
+          <div class="btn-row">
+            <button id="rec-start" class="btn primary">Record</button>
+            <button id="rec-stop" class="btn hidden">Stop</button>
+            <button id="rec-stop-play" class="btn hidden">Stop the sound</button>
+          </div>
+          <p id="rec-msg" class="muted" role="status" aria-live="polite"></p>
+          <ul id="rec-list" class="rec-list"></ul>
         </div>
       </section>
 
@@ -889,6 +925,26 @@
               <button id="tap-reset" class="btn btn-sm">Remove the correction</button>
               <span class="muted" id="tap-now"></span>
             </div>
+          </div>
+          <div class="card" id="settings-pedal">
+            <h3>Foot switch</h3>
+            <p class="muted">The app shows the foot switch parts only after you push a foot switch down. You do not need a foot switch for the course.</p>
+            <div class="set-row">
+              <button id="pedal-forget" class="btn btn-sm">Forget the foot switch</button>
+              <span class="muted" id="pedal-now" role="status"></span>
+            </div>
+          </div>
+          <div class="card" id="settings-coach">
+            <h3>Weekly coach</h3>
+            <p class="muted">The Progress page always shows a short summary of your week. A local coach (Ollama) can also write the summary in its own words.</p>
+            <label class="switch"><input type="checkbox" id="set-coach"><span class="switch-track"></span> Use the local coach (Ollama)</label>
+            <div class="set-row">
+              <label class="pr-label" for="set-coach-model">Model</label>
+              <input id="set-coach-model" class="select coach-model" type="text" spellcheck="false" autocomplete="off" maxlength="80">
+              <button id="set-coach-check" class="btn btn-sm">Check the coach</button>
+              <span class="muted" id="set-coach-status" role="status"></span>
+            </div>
+            <p class="note">Off at the start. The app does not install Ollama and does not download a model. The coach gets only your practice numbers and song names, never sound. It runs on this Mac only.</p>
           </div>
           <div class="card">
             <h3>Setup</h3>

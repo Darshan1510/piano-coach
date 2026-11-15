@@ -235,12 +235,12 @@ export class TodayScreen {
     const btn = document.createElement("button");
     btn.className = `btn btn-lg today-step${done ? " done" : ""}${!done && [...Array(k).keys()].every((x) => this.stepsDone.has(x)) ? " primary" : ""}`;
     const label = st.label === "hard_part" ? `Practice Part ${st.section + 1} slowly (60% speed)`
-      : st.label === "whole" ? (st.mode === "play" ? "Play the whole song along" : "Play the whole song")
+      : st.label === "whole" ? (st.lead ? "Play the tune and make your own left hand" : st.mode === "play" ? "Play the whole song along" : "Play the whole song")
       : `Practice ${partName(null, st.section)}`;
     btn.innerHTML = `${done ? ICON_OK : `<span class="today-step-num">${k + 1}</span>`}<span></span>`;
     btn.querySelector("span:last-child").textContent = label;
     btn.addEventListener("click", () => {
-      this.openSong(b.song_id, { returnTo: "today", preset: { mode: st.mode || "wait", hands: b.hands, section: st.section, speed: st.speed ?? undefined, loop: false } });
+      this.openSong(b.song_id, { returnTo: "today", preset: { mode: st.mode || "wait", hands: b.hands, section: st.section, speed: st.speed ?? undefined, loop: false, lead: !!st.lead } });
     });
     return btn;
   }

@@ -140,10 +140,12 @@ export function songCard(s, first, onOpen, actions = {}) {
   if (imported) {
     card.querySelector(".song-card-top").insertAdjacentHTML("beforeend", '<span class="pill pill-quiet pill-mine">Your song</span>');
     if (s.version_of) {
-      card.querySelector(".pill-mine").textContent = "Easy version";
+      const moved = s.version_of.kind === "transpose";
+      card.querySelector(".pill-mine").textContent = moved ? "New key family" : "Easy version";
       const of = document.createElement("p");
       of.className = "song-of muted";
-      of.textContent = `An easy version of "${s.version_of.title}".${s.version_of.changed_text ? ` ${s.version_of.changed_text}` : ""}`;
+      of.textContent = moved ? `"${s.version_of.title}" from a new start key.`
+        : `An easy version of "${s.version_of.title}".${s.version_of.changed_text ? ` ${s.version_of.changed_text}` : ""}`;
       card.querySelector(".song-title").after(of);
     }
     if (s.difficulty) {

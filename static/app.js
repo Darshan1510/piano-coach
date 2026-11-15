@@ -15,6 +15,8 @@ import { ProgressScreen } from "/static/js/progress.js";
 import { EditorScreen } from "/static/js/editor.js";
 import { EasyScreen } from "/static/js/easy.js";
 import { IntuitionScreen } from "/static/js/intuition.js";
+import { RecorderPanel } from "/static/js/recorder.js";
+import { WeekCard, bindCoachSettings } from "/static/js/coach.js";
 
 const $ = (id) => document.getElementById(id);
 const link = new Link();
@@ -84,6 +86,7 @@ function show(screen) {
   if (current === "today" && screen !== "today") today.hide();
   if (current === "editor" && screen !== "editor") editor.hide();
   if (current === "intuition" && screen !== "intuition") intuitionScreen.hide();
+  if (current === "play" && screen !== "play") recorder.hide(); // a running recording stops and is saved
   if (screen === "practice") SUB_SCREENS.practice.nav = RETURN_NAV[practice.returnTo] || "songs";
   current = screen;
   for (const el of document.querySelectorAll(".screen")) el.classList.add("hidden");
@@ -92,14 +95,15 @@ function show(screen) {
   for (const b of document.querySelectorAll(".nav-item")) b.classList.toggle("active", b.dataset.screen === navId);
   $("page-title").textContent = SUB_SCREENS[screen]?.title || NAV.find((n) => n.id === screen)?.label || "";
   if (screen === "about") updateDelayText();
-  if (screen === "settings") { loadHabitSettings(); loadTapSetting(); }
+  if (screen === "settings") { loadHabitSettings(); loadTapSetting(); loadCoachSettings(); loadPedalSetting(); }
+  if (screen === "play") recorder.load();
   if (screen === "songs") songsScreen.load();
   if (screen === "practice") practice.show();
   if (screen === "import") importScreen.show();
   if (screen === "editor") editor.show();
   if (screen === "today") today.show();
   if (screen === "learn") learn.load();
-  if (screen === "progress") progressScreen.show();
+  if (screen === "progress") { progressScreen.show(); weekCard.show(); }
   if (screen === "intuition") intuitionScreen.show();
   if (screen === "words") terms.load().then(() => words.render());
   if (screen === "basics") basics.show();
@@ -191,7 +195,7 @@ let course = null; // course state (/api/course): level, basics, bar lines
 
 const practice = new PracticeScreen({
   link, piano, api, celebrate, reducedMotion, getStatus: () => status, startSound,
-  terms, getCourse: () => course, onReturn: (to) => show(to || "songs"),
+  terms, getCourse: () => course, onReturn: (to) => show(to || "songs"), modal,
 });
 async function openSong(id, opts = {}) {
   try {
@@ -260,6 +264,11 @@ const today = new TodayScreen({
 });
 window.riyaz.today = today;
 const progressScreen = new ProgressScreen({ api, terms });
+// Phase 6: the weekly summary (Progress), the coach switch (Settings), the recorder (Free play).
+const weekCard = new WeekCard({ api, terms });
+const loadCoachSettings = bindCoachSettings(api);
+const recorder = new RecorderPanel({ link, api, piano, getStatus: () => status, startSound, onSong: (id) => openSong(id) });
+window.riyaz.recorder = recorder;
 // Phase 5b: intuition exercises (PLAN 10), the "Ear" page.
 const intuitionScreen = new IntuitionScreen({
   link, api, piano, terms, reducedMotion, celebrate, getStatus: () => status, onLearn: () => show("learn"),
@@ -515,7 +524,9 @@ link.on("note_off", (e) => {
 
 link.on("cc", (e) => {
   if (e.control !== 64) return;
-  if (e.reason !== "disconnect") $("pedal-box").classList.remove("hidden"); // first real CC 64: show it
+  // The first real foot switch down (value 64 or more) shows it: some keyboards send one CC 64 = 0
+  // with no foot switch.
+  if (e.reason !== "disconnect" && e.value >= 64) $("pedal-box").classList.remove("hidden");
   pedal = e.value >= 64;
   $("pedal").textContent = pedal ? "Down" : "Up";
   if (!pedal) {
@@ -773,6 +784,24 @@ function renderTapNow(st) {
   $("tap-now").textContent = st && st.done ? `Correction now: ${Math.round(st.offset_ms)} ms.` : "No correction yet.";
   $("tap-reset").disabled = !(st && st.done);
 }
+
+// "Forget the foot switch" (Settings): the foot switch parts hide again until the next foot switch down.
+function renderPedalSetting(seen) {
+  $("pedal-forget").disabled = !seen;
+  $("pedal-now").textContent = seen ? "The app found a foot switch." : "The app did not find a foot switch.";
+}
+async function loadPedalSetting() {
+  const st = await api("/api/pedal").catch(() => null);
+  if (st) renderPedalSetting(st.seen);
+}
+$("pedal-forget").addEventListener("click", async () => {
+  const st = await api("/api/pedal/forget", {}).catch(() => null);
+  if (st) renderPedalSetting(st.seen);
+});
+link.on("pedal", (e) => {
+  if (!e.seen) { $("pedal-box").classList.add("hidden"); $("pr-pedal").classList.add("hidden"); }
+  if (current === "settings") renderPedalSetting(e.seen);
+});
 
 async function loadTapSetting() {
   const st = await api("/api/settings/latency").catch(() => null);

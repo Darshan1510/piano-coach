@@ -267,3 +267,31 @@ def test_intuition_exercises_end_to_end_with_fake_player(live_server):
         assert r["score"] == 100 and r["wrong"] == 0, r
         results.append(r)
     print("\nINTUITION", json.dumps(results))
+
+
+def test_phase6_lead_sheet_recorder_and_velocity_end_to_end(live_server):
+    """Phase 6 with real CoreMIDI: a lead-sheet run (tune + own left hand) scores high; the touch
+    (velocity) reaches the play-along log (dynamics); the recorder records the virtual keys and
+    the export goes back through the MIDI importer. The foot switch is never sent: no pedal."""
+
+    from tools.fake_player import _get, _post, follow_play
+
+    with FakePlayer(PORT) as fp:
+        wait_connected(live_server, PORT)
+        r = asyncio.run(follow_play(live_server, fp, "happy-birthday", ("R",), 1.0, lead=True, timeout=60))
+        assert r["lead"]["score"] >= 90 and r["score"] >= 90 and r["task"] == "lead", r
+        _post(live_server, "/api/course/skip", {"level": 9})  # dynamics tips start at Level 9
+        r = asyncio.run(follow_play(live_server, fp, "amazing-grace-smooth", ("R", "L"), 1.0,
+                                    {"vel": {"R": 70, "L": 110}}, timeout=90, section=0))
+        assert r["dynamics"] and r["dynamics"]["balance"]["ok"] is False, r
+        _post(live_server, "/api/recorder/start", {})
+        fp.play([(60, 1), (64, 1), (67, 1)], bpm=240)
+        time.sleep(0.2)
+        st = _post(live_server, "/api/recorder/stop", {})
+        assert st["saved"]["notes"] == 3, st
+        song = _post(live_server, f"/api/recordings/{st['saved']['id']}/import", {})["song"]
+        got = _get(live_server, f"/api/songs/{song['id']}")
+        assert sorted(n["pitch"] for n in got["notes"]) == [60, 64, 67]
+        assert _get(live_server, "/api/pedal") == {"seen": False}
+    print("\nPHASE 6 VIRTUAL", json.dumps({"lead": True, "recording": st["saved"]}))
+

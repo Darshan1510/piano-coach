@@ -30,7 +30,7 @@ export class FallingNotes {
     this.bg = null;
     this.flashes = []; // {pitch, until}
     this.view = { active: new Set(["R"]), stops: null, stopIndex: 0, waiting: false, range: null, loop: false,
-      countInFrom: null, label: "", place: null, stopBeat: null, results: null };
+      countInFrom: null, label: "", place: null, stopBeat: null, results: null, chords: null };
   }
 
   setSong(song) {
@@ -164,6 +164,26 @@ export class FallingNotes {
         ctx.globalAlpha = 0.7;
         ctx.fillText(String(Math.floor(b / g) + 1), 6, y - 2);
         ctx.globalAlpha = 1;
+      }
+    }
+
+    // Lead-sheet mode (Phase 6): the names of the key groups on the left, where each one starts.
+    if (view.chords && view.chords.length) {
+      ctx.font = `800 13px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      for (const c of view.chords) {
+        if (c.start + c.dur < beat || c.start > beat + LOOKAHEAD) continue;
+        const y = Math.round(yOf(Math.max(c.start, beat)));
+        ctx.fillStyle = colors.L;
+        ctx.globalAlpha = 0.5;
+        ctx.fillRect(0, Math.round(yOf(c.start)), w, 2);
+        ctx.globalAlpha = 1;
+        const tw = ctx.measureText(c.name).width + 12;
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(28, y - 20, tw, 18);
+        ctx.fillStyle = colors.L;
+        ctx.fillText(c.name, 34, y - 4);
       }
     }
 

@@ -90,6 +90,33 @@ def prevent_app_nap():
         options, "Riyaz listens to the MIDI keyboard")
 
 
+class Api:
+    """Methods for the page as window.pywebview.api.* in the app window (same pattern as DocKit).
+
+    The native web view ignores <a download>, so "Save as MIDI file" goes through a Save dialog.
+    In a normal browser (--browser) pywebview is not there and the download link works.
+    """
+
+    def save_recording(self, rec_id: str):
+        import shutil
+
+        from riyaz.recorder import Recorder, RecorderError
+
+        try:
+            src = Recorder.export(str(rec_id))
+        except (RecorderError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        result = webview.windows[0].create_file_dialog(webview.FileDialog.SAVE, save_filename=src.name)
+        if not result:
+            return {"ok": False, "cancelled": True}
+        dest = result if isinstance(result, str) else result[0]
+        try:
+            shutil.copyfile(src, dest)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": dest}
+
+
 def pause_song_hidden():
     """The window is hidden: pause the song (WKWebView stops drawing frames in a hidden window)."""
     practice = app.state.riyaz.get("practice")
@@ -119,7 +146,7 @@ if __name__ == "__main__":
         server.should_exit = True
         thread.join(timeout=SHUTDOWN_WAIT_S)
         sys.exit(1)
-    window = webview.create_window("Riyaz", URL, width=1280, height=820, min_size=(1100, 680))
+    window = webview.create_window("Riyaz", URL, width=1280, height=820, min_size=(1100, 680), js_api=Api())
     window.events.minimized += pause_song_hidden  # the page also pauses on "visibilitychange"
     webview.start()
     # Window closed: stop the server so that shutdown code runs (MIDI ports close, Local On).

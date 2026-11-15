@@ -1094,3 +1094,21 @@ input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer;
 @media (prefers-reduced-motion: reduce) {
   .ix-jam-line i { transition: none; }
 }
+
+/* ---------- Phase 6: weekly summary, recorder, lead sheet, new key family ---------- */
+.progress-week { grid-column: 1 / -1; }
+.pg-week-lines, .pg-week-tips { margin: var(--sp-2) 0; padding-left: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-1); }
+.pg-week-tips li { color: var(--text); }
+.pg-coach { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--accent-soft); }
+.pg-coach p { margin: var(--sp-1) 0 0; white-space: pre-wrap; }
+.coach-model { width: 180px; }
+.rec-card { margin-top: var(--sp-5); }
+.rec-list { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.rec-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.rec-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rec-buttons { margin: 0; }
+.pr-end-extra { font-weight: 600; color: var(--text); }
+.learn-task { font-size: var(--fs-sm); color: var(--accent-strong); margin: 0 0 var(--sp-2); }
+#pr-pedal { align-self: center; }
+a.btn, a.btn:hover { text-decoration: none; }

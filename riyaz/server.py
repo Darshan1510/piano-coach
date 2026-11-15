@@ -13,13 +13,14 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse
 
-from . import clock, config, course as course_mod, editor as editor_mod, feedback, review, session as session_mod, \
-    simplify, skills as skills_mod, songs
+from . import clock, coach as coach_mod, config, course as course_mod, dynamics, editor as editor_mod, feedback, \
+    leadsheet, review, session as session_mod, simplify, skills as skills_mod, songs, transpose
+from .recorder import Recorder, RecorderError
 from .course import Course, CourseError
 from .db import Store
 from .drill import Drill, DrillError
@@ -177,6 +178,18 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
 
         drill = Drill(hub.publish, vel_split=vel_split)
         intuition = Intuition(hub.publish)  # intuition exercises (PLAN 10), riyaz/intuition.py
+        recorder = Recorder(hub.publish)  # free-play recorder (Phase 6), riyaz/recorder.py
+        pedal = {"seen": bool(store.get("pedal.seen", False))}
+
+        def pedal_seen() -> None:
+            """The first foot switch message (CC 64): the pedal parts of the app can show (Phase 6).
+            The user has no pedal now; nothing in the course needs it."""
+            pedal["seen"] = True
+            try:
+                store.set("pedal.seen", True)
+            except Exception:
+                log.exception("Cannot save the pedal setting")
+            hub.publish({"type": "pedal", "seen": True})
 
         def sink(evt: dict) -> None:
             hub.publish(evt)  # the UI gets the key first (live keyboard)
@@ -184,15 +197,24 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             drill.on_midi(evt)  # then the drill (keyboard basics, skill moments, "Find the key")
             intuition.on_midi(evt)  # then the intuition exercise (ear games)
             tapcheck.on_midi(evt)  # then the latency check ("tap with the click")
+            recorder.on_midi(evt)  # then the free-play recorder
             if evt.get("type") == "note_on" and evt.get("reason") is None:
                 activity.press()
+            elif (evt.get("type") == "cc" and evt.get("control") == config.SUSTAIN_CC and evt.get("reason") is None
+                  and not pedal["seen"] and int(evt.get("value") or 0) >= 64):
+                # Only a foot switch that goes down (value 64 or more): some keyboards send one
+                # CC 64 = 0 at the start, with no foot switch.
+                pedal_seen()
 
         midi = MidiService(store, sink=sink, poll_interval=poll_interval)
         practice.midi = midi
         midi.echo_filter = practice.echo.is_echo  # song notes sent to the keyboard that come back
         intuition.midi = midi
         intuition.echo = practice.echo  # the same echo guard for the notes of the ear games
-        state.update(midi=midi, practice=practice, drill=drill, tapcheck=tapcheck, intuition=intuition)
+        recorder.midi = midi
+        recorder.echo = practice.echo  # a recording that plays on the keyboard speaker
+        state.update(midi=midi, practice=practice, drill=drill, tapcheck=tapcheck, intuition=intuition,
+                     recorder=recorder, pedal=pedal)
         state["audio"] = audio_import.AudioJobs(user_level=lambda: course.user_level())
         if start_midi:
             await asyncio.to_thread(midi.start)
@@ -205,6 +227,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             activity.flush()
             await asyncio.to_thread(practice.close)
             await asyncio.to_thread(intuition.close)
+            await asyncio.to_thread(recorder.close)
             await asyncio.to_thread(midi.stop)
             await asyncio.to_thread(results.shutdown, True)
             store.close()
@@ -265,6 +288,16 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         run also gets its findings and the automatic speed change."""
         try:
             c: Course = state["course"]
+            if evt.get("mode") == "play" and evt.get("log"):
+                # Dynamics coaching (Phase 6): soft and loud, the tune louder than the left hand.
+                # Only from Level 9 or after the "melody louder" lesson (before, a beginner gets
+                # no soft-and-loud tips); dynamics.analyze gives None when the touch did not change.
+                song = course_mod.get_song(str(evt.get("song_id")))
+                vr = (state["midi"].calibration() or {}).get("velocity_range") if "midi" in state else None
+                on = c.user_level() >= dynamics.FROM_LEVEL or dynamics.SKILL in state["store"].skills_done()
+                dyn = dynamics.analyze(song, evt["log"], vr) if song is not None and on else None
+                if dyn is not None:
+                    evt = {**evt, "dynamics": dyn}
             result = c.record_run(evt, session_id=state["sessions"].active_id)
             if result is None:
                 return
@@ -364,7 +397,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     async def practice_state():
         return practice().state()
 
-    # One key activity at a time (practice, ear game, the "Find the key" drill, the tap check):
+    # One key activity at a time (practice, ear game, the "Find the key" drill, the tap check, the
+    # keyboard playback of a recording):
     # each start stops the others. Only active ones are stopped (no extra state events).
 
     def stop_others(keep: str, keep_practice: bool = False) -> None:
@@ -377,6 +411,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             state["intuition"].stop()
         if keep != "tapcheck" and "tapcheck" in state and state["tapcheck"].active:
             state["tapcheck"].cancel()
+        if keep != "recorder" and "recorder" in state and state["recorder"].playing:
+            state["recorder"].stop_playback()  # a recording that plays on the keyboard speaker
 
     # Practice calls can send MIDI (notes off) and wait for the MIDI thread: run them in a thread.
 
@@ -401,7 +437,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
                 count_in=bool(body.get("count_in", True)), accompany=bool(body.get("accompany", True)),
                 output=output, breaks=body.get("breaks") if isinstance(body.get("breaks"), list) else None,
                 loop=False if body.get("loop") is False else None, span=body.get("span"),
-                adapt=opts["adapt"], loop_step=opts["loop_step"])
+                adapt=opts["adapt"], loop_step=opts["loop_step"], lead=body.get("lead") is True)
         except PracticeError as exc:
             raise HTTPException(400, str(exc))
 
@@ -674,8 +710,9 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         return {"ok": True}
 
     @app.get("/api/course/moments/{song_id}")
-    async def course_moments(song_id: str):
-        return {"moments": await asyncio.to_thread(course().pending_moments, song_id)}
+    async def course_moments(song_id: str, task: str | None = None):
+        task = task if task in course_mod.TASKS else None
+        return {"moments": await asyncio.to_thread(course().pending_moments, song_id, task)}
 
     @app.get("/api/course/skills/{skill_id}")
     async def course_skill(skill_id: str):
@@ -957,6 +994,171 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     @app.get("/api/debug/latency")
     async def get_latency():
         return latency.summary()
+
+    # ---------------------------------------------------------------- Phase 6: lead sheet, new key, pedal
+
+    @app.get("/api/songs/{song_id}/lead")
+    async def song_lead(song_id: str):
+        song = await asyncio.to_thread(course_mod.get_song, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        sheet = await asyncio.to_thread(leadsheet.sheet, song)
+        if sheet is None:
+            raise HTTPException(400, "This song has no names for the left hand. Select a different song.")
+        return sheet
+
+    @app.get("/api/songs/{song_id}/keys")
+    async def song_keys(song_id: str):
+        song = await asyncio.to_thread(songs.get, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        src = transpose.source_of(song)
+        have = [songs.summary(v, user_level()) for v in await asyncio.to_thread(transpose.versions, src["id"])]
+        unlocked = set(await asyncio.to_thread(state["store"].terms))
+        opts = [{**c, "key": transpose.key_text(c["key"], unlocked)}
+                for c in await asyncio.to_thread(transpose.choices, src)]
+        return {"song_id": src["id"], "title": src["title"], "key": transpose.key_text(src.get("key") or "", unlocked),
+                "choices": opts, "versions": have}
+
+    @app.post("/api/songs/{song_id}/transpose")
+    async def song_transpose(song_id: str, body: dict = Body(...)):
+        song = await asyncio.to_thread(songs.get, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+
+        def run() -> dict:
+            v = transpose.save(transpose.make(song, body.get("shift")))
+            return {"song": songs.summary(v, user_level()), "key": transpose.key_text(v["key"], set(state["store"].terms()))}
+
+        try:
+            return await asyncio.to_thread(run)
+        except transpose.TransposeError as exc:
+            raise HTTPException(400, str(exc))
+        except songs.SongError:
+            log.exception("Transposed song not valid")
+            raise HTTPException(500, "The app cannot move this song to a new key family.")
+        except OSError:
+            log.exception("Cannot save the transposed song")
+            raise HTTPException(500, "The app cannot save the song. Make sure that the disk has free space.")
+
+    @app.get("/api/pedal")
+    async def pedal_state():
+        return {"seen": state["pedal"]["seen"]}
+
+    @app.post("/api/pedal/forget")
+    async def pedal_forget():
+        """Settings "Forget the foot switch": the foot switch parts are hidden again (until the
+        next foot switch message)."""
+        state["pedal"]["seen"] = False
+        await asyncio.to_thread(state["store"].set, "pedal.seen", False)
+        hub.publish({"type": "pedal", "seen": False})
+        return {"seen": False}
+
+    # ---------------------------------------------------------------- Phase 6: free-play recorder
+
+    def recorder() -> Recorder:
+        return state["recorder"]
+
+    @app.get("/api/recorder")
+    async def recorder_state():
+        return {**recorder().state(), "recordings": await asyncio.to_thread(Recorder.list)}
+
+    @app.post("/api/recorder/start")
+    async def recorder_start():
+        try:
+            return await asyncio.to_thread(recorder().start)
+        except RecorderError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post("/api/recorder/stop")
+    async def recorder_stop():
+        try:
+            return await asyncio.to_thread(recorder().stop)
+        except OSError:
+            log.exception("Cannot save the recording")
+            raise HTTPException(500, "The app cannot save the recording. Make sure that the disk has free space.")
+
+    @app.post("/api/recorder/stop-playback")
+    async def recorder_stop_playback():
+        return await asyncio.to_thread(recorder().stop_playback)
+
+    @app.get("/api/recordings/{rec_id}")
+    async def recording_get(rec_id: str):
+        try:
+            return await asyncio.to_thread(Recorder.get, rec_id)
+        except RecorderError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/recordings/{rec_id}/delete")
+    async def recording_delete(rec_id: str):
+        try:
+            ok = await asyncio.to_thread(Recorder.delete, rec_id)
+        except RecorderError as exc:
+            raise HTTPException(404, str(exc))
+        if not ok:
+            raise HTTPException(404, "The app cannot find this recording.")
+        return {"ok": True}
+
+    @app.post("/api/recordings/{rec_id}/play-keyboard")
+    async def recording_play_keyboard(rec_id: str):
+        if midi().status()["output"] is None:
+            raise HTTPException(409, "The app cannot send notes to the keyboard. Use the Mac sound.")
+        await asyncio.to_thread(stop_others, "recorder")
+        try:
+            return await asyncio.to_thread(recorder().play_keyboard, rec_id)
+        except RecorderError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.get("/api/recordings/{rec_id}/midi")
+    async def recording_midi(rec_id: str):
+        try:
+            path = await asyncio.to_thread(Recorder.export, rec_id)
+        except RecorderError as exc:
+            raise HTTPException(404, str(exc))
+        return Response(path.read_bytes(), media_type="audio/midi",
+                        headers={"Content-Disposition": f'attachment; filename="{rec_id}.mid"'})
+
+    @app.post("/api/recordings/{rec_id}/import")
+    async def recording_import(rec_id: str):
+        """The recording as a song (through the MIDI importer): practice it or edit it."""
+        try:
+            path = await asyncio.to_thread(Recorder.export, rec_id)
+            rec = await asyncio.to_thread(Recorder.get, rec_id)
+            song = await asyncio.to_thread(midi_import.import_file, path.read_bytes(), f"{rec_id}.mid",
+                                           title=rec["title"], user_level=user_level())
+        except RecorderError as exc:
+            raise HTTPException(404, str(exc))
+        except midi_import.MidiImportError as exc:
+            raise HTTPException(400, str(exc))
+        return await asyncio.to_thread(imported_cards, song)
+
+    # ---------------------------------------------------------------- Phase 6: weekly coach
+
+    @app.get("/api/settings/coach")
+    async def get_coach_settings():
+        return coach_mod.settings(state["store"])
+
+    @app.post("/api/settings/coach")
+    async def set_coach_settings(body: dict = Body(...)):
+        return await asyncio.to_thread(coach_mod.set_settings, state["store"], body)
+
+    @app.get("/api/coach/week")
+    async def coach_week():
+        """The rule summary (no LLM, no network)."""
+        return await asyncio.to_thread(coach_mod.weekly, state["store"], course(), None, False)
+
+    @app.get("/api/coach/status")
+    async def coach_status():
+        st = coach_mod.settings(state["store"])
+        if not st["enabled"]:
+            return {**st, "running": None}  # off: the app does not look for Ollama
+        info = await asyncio.to_thread(coach_mod.Coach(model=st["model"]).status)
+        return {**st, **info}
+
+    @app.post("/api/coach/summary")
+    async def coach_summary():
+        """The weekly card with the LLM text when the coach is on and Ollama runs on this Mac."""
+        return await asyncio.to_thread(coach_mod.weekly, state["store"], course())
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

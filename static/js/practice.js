@@ -13,6 +13,11 @@
 // If the user stops, the song pauses at the stop point: "Continue from here". After the run: the
 // score, at most 3 findings with a preview, "Show me" and an action button (PLAN 7.2), and the
 // automatic speed change (PLAN 7.3).
+//
+// Phase 6: lead-sheet mode (opts.lead): play along with only the tune and the names of the key
+// groups; the user makes the left hand (scored on the keys of each name, riyaz/leadsheet.py).
+// "Play in a new key family" (riyaz/transpose.py). The foot switch pill shows only after the
+// first CC 64 message (the user has no pedal now). Dynamics tips after a play-along run.
 
 import { Keyboard, keyLayout, keyName } from "/static/js/keyboard.js";
 import { FallingNotes, PreviewView } from "/static/js/renderer.js";
@@ -77,7 +82,8 @@ export function radioKeys(group) {
 }
 
 export class PracticeScreen {
-  constructor({ link, piano, api, celebrate, reducedMotion, getStatus, startSound, terms, getCourse, onReturn }) {
+  constructor({ link, piano, api, celebrate, reducedMotion, getStatus, startSound, terms, getCourse, onReturn, modal }) {
+    this.modal = modal;
     this.terms = terms;
     this.getCourse = getCourse || (() => null);
     this.onReturn = onReturn || (() => {});
@@ -95,7 +101,8 @@ export class PracticeScreen {
     this.ps = null; // last practice state from the backend (this song)
     this.visible = false;
     this.opts = { mode: "wait", hands: ["R"], section: null, speed: 1, click: false, countIn: true,
-      accompany: true, kbSound: false, adapt: true, loopStep: true, span: null };
+      accompany: true, kbSound: false, adapt: true, loopStep: true, span: null, lead: false };
+    this.sheet = null; // lead sheet of the song (chord names + split), or null
     this.results = new Map(); // play-along: note id -> "hit" | "miss" (red notes on the view)
     this.place = null; // the place that a finding names (band on the falling notes)
     this.peek = null; // after a run: the view shows this beat (the place of a finding)
@@ -154,7 +161,12 @@ export class PracticeScreen {
     if (typeof pre.speed === "number") this.opts.speed = pre.speed;
     if (Array.isArray(pre.span)) this.opts.span = pre.span;
     this.opts.loop = pre.loop === false ? false : null; // daily session: a part plays one time
-    this.moments = (await this.api(`/api/course/moments/${encodeURIComponent(song.id)}`).catch(() => ({ moments: [] }))).moments;
+    this.sheet = await this.api(`/api/songs/${encodeURIComponent(song.id)}/lead`).catch(() => null);
+    this.opts.lead = !!(pre.lead && this.sheet && this.handsPresent.includes("R"));
+    if (this.opts.lead) { this.opts.mode = "play"; this.opts.hands = ["R"]; this.opts.loop = false; }
+    this.task = this.opts.lead ? "lead" : null;
+    const q = this.task ? `?task=${this.task}` : "";
+    this.moments = (await this.api(`/api/course/moments/${encodeURIComponent(song.id)}${q}`).catch(() => ({ moments: [] }))).moments;
     this._hideSkill();
     this.lastResult = null;
     $("pr-back-text").textContent = RETURN[this.returnTo].back;
@@ -176,11 +188,54 @@ export class PracticeScreen {
     const clicks = song.time_signature[0];
     $("pr-countin-label").textContent = `${clicks} clicks before the start`;
     this._hideEnd();
+    this._leadSong();
     this._renderControls();
     this._applyView();
     const st = await this.api("/api/practice").catch(() => null);
     if (st && st.song_id === song.id) this._onState(st);
+    if (pre.newKey) setTimeout(() => this._newKey(), 0);
     return song;
+  }
+
+  // Lead-sheet mode: the falling notes show only the tune; the names of the key groups are on the left.
+  _leadSong() {
+    if (!this.song) return;
+    const lead = this.opts.lead && this.sheet;
+    this.renderer.setSong(lead ? { ...this.song, notes: this.song.notes.filter((n) => n.hand === "R") } : this.song);
+  }
+
+  async _setLead(on) {
+    this.opts.lead = !!(on && this.sheet);
+    if (this.opts.lead) { this.opts.mode = "play"; this.opts.hands = ["R"]; }
+    this.task = this.opts.lead ? "lead" : null;
+    const q = this.task ? `?task=${this.task}` : "";
+    this.moments = (await this.api(`/api/course/moments/${encodeURIComponent(this.song.id)}${q}`).catch(() => ({ moments: [] }))).moments;
+    this._leadSong();
+    await this._setOpt("lead", this.opts.lead);
+  }
+
+  // "Play in a new key family" (Level 10): the app makes the song from a new start key and opens it.
+  async _newKey() {
+    if (!this.song || !this.modal) return;
+    let info;
+    try {
+      info = await this.api(`/api/songs/${encodeURIComponent(this.song.id)}/keys`);
+    } catch (err) { this._say(err.message, 4000); return; }
+    const opts = info.choices.map((c) => ({ id: String(c.shift), label: `${c.key} (${c.black_keys} black keys)` }));
+    const have = info.versions.map((v) => `<li>${esc(v.title)}</li>`).join("");
+    const choice = await this.modal.show({
+      eyebrow: "New key family", title: `Play "${info.title}" from a new start key`,
+      html: `<p>All keys of the song move by the same number of keys. The tune stays the same. Now: ${esc(info.key)}.</p>`
+        + `<p>Select the new key family. Fewer black keys is easier.</p>`
+        + (have ? `<p class="muted">You made these before:</p><ul class="modal-list">${have}</ul>` : ""),
+      buttons: [...opts.slice(0, 4), { id: "cancel", label: "Not now" }],
+    });
+    if (!choice || choice === "cancel") return;
+    try {
+      const r = await this.api(`/api/songs/${encodeURIComponent(info.song_id)}/transpose`, { shift: Number(choice) });
+      await this.open(r.song.id, { returnTo: this.returnTo, preset: { mode: "wait", hands: this.opts.hands } });
+      this._say(`The song is now in ${r.key}. Play it in Play mode first.`, 4000, "go");
+    } catch (err) { this._say(err.message, 4000); }
   }
 
   // Words that change after an unlock (PLAN 7.4): speed -> tempo, the click -> beat, bar numbers.
@@ -236,7 +291,10 @@ export class PracticeScreen {
 
   _bind() {
     for (const b of document.querySelectorAll("#pr-mode .seg")) {
-      b.addEventListener("click", () => this._setOpt("mode", b.dataset.mode));
+      b.addEventListener("click", () => {
+        if (this.opts.lead && b.dataset.mode !== "play") { this.opts.lead = false; this.task = null; this._leadSong(); }
+        this._setOpt("mode", b.dataset.mode);
+      });
     }
     for (const b of document.querySelectorAll("#pr-hands .seg")) {
       b.addEventListener("click", () => this._setOpt("hands", b.dataset.hands.split("")));
@@ -255,6 +313,18 @@ export class PracticeScreen {
     $("pr-kbsound").addEventListener("change", (e) => this._setOpt("kbSound", e.target.checked));
     $("pr-adapt").addEventListener("change", (e) => { this.opts.adapt = e.target.checked; this._saveOptions(); });
     $("pr-loopstep").addEventListener("change", (e) => { this.opts.loopStep = e.target.checked; this._saveOptions(); });
+    $("pr-lead").addEventListener("change", (e) => this._setLead(e.target.checked));
+    $("pr-newkey").addEventListener("click", () => this._newKey());
+    this.link.on("cc", (e) => {
+      if (e.control !== 64) return;
+      // A real foot switch that goes down (value 64 or more) shows the pill.
+      if ((e.reason === undefined || e.reason === null) && e.value >= 64) $("pr-pedal").classList.remove("hidden");
+      $("pr-pedal").textContent = e.value >= 64 ? "Foot switch: down" : "Foot switch: up";
+    });
+    this.link.on("practice_lead", (e) => {
+      if (!this._ours(e)) return;
+      this._mark(e.ok ? "hit" : "timing", e.pitch); // green: a key of the name; yellow: not in it
+    });
     $("pr-end-next").addEventListener("click", () => this._nextStep());
     $("pr-findings").addEventListener("click", (e) => {
       const b = e.target.closest("button[data-act]");
@@ -365,9 +435,14 @@ export class PracticeScreen {
       b.disabled = !need.every((h) => this.handsPresent.includes(h));
       b.setAttribute("aria-checked", String(b.dataset.hands === handsKey));
     }
-    $("pr-hands-group").classList.toggle("hidden", this.handsPresent.length < 2);
+    $("pr-hands-group").classList.toggle("hidden", this.handsPresent.length < 2 || o.lead);
     const other = this.handsPresent.find((h) => !o.hands.includes(h));
-    $("pr-accompany-row").classList.toggle("hidden", !other || o.mode === "watch");
+    $("pr-accompany-row").classList.toggle("hidden", !other || o.mode === "watch" || o.lead);
+    const c = this.getCourse();
+    const level10 = !!(c && c.user_level >= 10);
+    $("pr-lead-row").classList.toggle("hidden", !this.sheet || !(level10 || o.lead));
+    $("pr-lead").checked = !!o.lead;
+    $("pr-newkey").classList.toggle("hidden", !(level10 && this.song.source !== "course"));
     $("pr-adapt-row").classList.toggle("hidden", o.mode !== "play");
     $("pr-adapt").checked = o.adapt;
     $("pr-loopstep-row").classList.toggle("hidden", o.mode !== "play" || (o.section === null && !o.span));
@@ -413,10 +488,12 @@ export class PracticeScreen {
     const o = this.opts;
     // Skill moments (PLAN 8.2): only in Play mode, for the hands that the user plays.
     const [rs, re] = this._range();
-    const moments = o.mode === "wait"
-      ? this.moments.filter((m) => !m.done && m.hands.every((h) => o.hands.includes(h)) && m.at_beat < re - 1e-6
+    // Lead-sheet mode: the moments of the lead task come before the start (both hands play).
+    const handsNow = o.lead ? ["R", "L"] : o.hands;
+    const moments = o.mode === "wait" || o.lead
+      ? this.moments.filter((m) => !m.done && m.hands.every((h) => handsNow.includes(h)) && m.at_beat < re - 1e-6
         && m.at_beat >= rs - 1e-6) : [];
-    const first = moments.find((m) => m.at_beat <= rs + 1e-6);
+    const first = o.lead ? moments[0] : moments.find((m) => m.at_beat <= rs + 1e-6);
     if (first) { // the new skill is at the start: teach it before the song starts
       this._showSkill(first.id, first.at_beat, true);
       return;
@@ -428,6 +505,7 @@ export class PracticeScreen {
         breaks: moments.map((m) => ({ beat: m.at_beat, skill: m.id })),
         ...(o.loop === false && (o.section !== null || o.span) ? { loop: false } : {}),
         ...(o.span ? { span: o.span, section: null } : {}),
+        ...(o.lead ? { lead: true, accompany: false, hands: ["R"], mode: "play", loop: false } : {}),
       });
       this.results = new Map();
       this.peek = null;
@@ -503,6 +581,8 @@ export class PracticeScreen {
     $("pr-findings").classList.add("hidden");
     $("pr-findings").innerHTML = "";
     $("pr-end-adapt").classList.add("hidden");
+    $("pr-end-lead").classList.add("hidden");
+    $("pr-end-dyn").classList.add("hidden");
     $("pr-end-score").classList.toggle("hidden", e.mode !== "play");
     $("pr-end-card").classList.toggle("is-play", e.mode === "play");
     this.lastEnd = e;
@@ -536,6 +616,15 @@ export class PracticeScreen {
     $("pr-score-time").textContent = `${Math.round(sc.timing)}%`;
     $("pr-score-len").textContent = `${Math.round(sc.length)}%`;
     $("pr-end-text").textContent = `You played ${sc.hit} of ${sc.notes} keys. ${sc.perfect + sc.good} were on time.`;
+    const ld = e.lead;
+    $("pr-end-lead").classList.toggle("hidden", !ld);
+    if (ld) {
+      $("pr-end-lead").textContent = ld.score === null || ld.score === undefined
+        ? "This part has no names for the left hand. Only the tune counts."
+        : `Your own left hand: ${ld.score} points. You played the keys of the name for ${ld.covered} of ${ld.chords} names. `
+          + `${Math.round(ld.tone_pct)}% of the different keys you played were keys of the name. The tune alone: ${sc.tune_total} points.`
+          + (ld.score < (ld.pass ?? 70) ? ` Your left hand needs ${ld.pass ?? 70} points or more to finish the song.` : "");
+    }
     $("pr-end-goal").textContent = "";
     $("pr-end-goal").className = "pr-end-goal";
     $("pr-end-again").classList.remove("hidden");
@@ -549,6 +638,9 @@ export class PracticeScreen {
   // The course result for this run (event "course"): is the song done, and what is still needed?
   _onResult(r) {
     this.lastResult = r;
+    const dyn = r.dynamics;
+    $("pr-end-dyn").classList.toggle("hidden", !(dyn && dyn.tips && dyn.tips.length));
+    if (dyn && dyn.tips && dyn.tips.length) $("pr-end-dyn").textContent = `Soft and loud: ${dyn.tips.join(" ")}`;
     const el = $("pr-end-goal");
     let text = "";
     let kind = "";
@@ -879,6 +971,7 @@ export class PracticeScreen {
     }
     this.view = { mode, hands, range };
     this.renderer.setView({
+      chords: (ps ? ps.lead : this.opts.lead) && this.sheet ? this.sheet.chords : null,
       active: hands, stopBeats, stopIndex: ps ? ps.stop_index || 0 : 0, waiting: !!(ps && ps.waiting),
       range, loop: ps ? ps.loop : this.opts.section !== null || !!this.opts.span, countInTo: range[0],
       place: this.place && (!ps || ps.done || !ps.loop) ? this.place : null,

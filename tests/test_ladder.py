@@ -17,6 +17,7 @@ NEW = {
     "canon-in-d": 6, "pop-loop": 6,
     "minuet-in-g": 7, "ode-to-joy-full": 7,
     "scarborough-fair": 8, "greensleeves": 8, "aura-lee": 8, "vande-mataram": 8,
+    "fur-elise": 9, "amazing-grace-smooth": 9,  # Phase 6
 }
 OWN = {"Origin": "http://127.0.0.1:8020"}
 
@@ -75,7 +76,7 @@ def test_song_shape_and_fingering(sid):
     assert not left or max(left) < 60, sid  # the left hand stays below middle C
     # Keys together only from Level 5 (PLAN 8.3); black keys only from Level 4.
     starts = [n["start"] for n in s["notes"] if n["hand"] == "L"]
-    single_left = ("minuet-in-g", "scarborough-fair")  # one key at a time (scarborough: broken chords)
+    single_left = ("minuet-in-g", "scarborough-fair", "fur-elise")  # one key at a time (broken chords, arpeggios)
     assert (len(starts) != len(set(starts))) == (NEW[sid] >= 5 and sid not in single_left), sid
     # Parts cover the song with plain names; the song ends at the end of a group of clicks.
     secs = s["sections"]
@@ -110,6 +111,9 @@ def test_black_keys_from_level_4_and_sharp_names_unlock_there():
 #   amazing-grace: https://hymnary.org/tune/new_britain (incipit 51313 21655 13132)
 #   clementine: https://www.flutetunes.com/tunes/oh-my-darling-clementine.mid (in G)
 #   aura-lee: https://www.flutetunes.com/tunes/aura-lee.mid (in G)
+#   fur-elise: Mutopia Project, https://www.mutopiaproject.org/ftp/BeethovenLv/WoO59/fur_Elise_WoO59/fur_Elise_WoO59.ly
+#     ("\\partial 8 e''16 dis'' e'' dis'' e'' b' d'' c'' a'8 r16 c' e' a' b'8 r16 e' gis' b'", 3/8: a sixteenth = 0.5)
+#   amazing-grace-smooth: the same tune as amazing-grace (hymnary.org New Britain)
 #   vande-mataram: Swarabitan vol. 46, https://archive.org/details/in.ernet.dli.2015.356988 (= the typed copy
 #   https://www.geetabitan.com/lyrics/rs-b/bande-mataram-bengali-notation.html), Sa = C4, grace notes left out
 START = {
@@ -124,6 +128,10 @@ START = {
     "scarborough-fair": ([62, 62, 69, 69, 64, 65, 64, 62], [2, 1, 2, 1, 1.5, 0.5, 1, 3]),
     "greensleeves": ([69, 72, 74, 76, 77, 76, 74, 71, 67, 69, 71, 72, 69, 69, 68, 69], [1, 2, 1, 1.5, .5, 1, 2, 1, 1.5, .5, 1, 2, 1, 1.5, .5, 1]),
     "aura-lee": ([67, 72, 71, 72, 74, 69, 74, 72, 71, 69, 71, 72], [1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 4]),
+    "fur-elise": ([76, 75, 76, 75, 76, 71, 74, 72, 69, 60, 64, 69, 71, 64, 68, 71],
+                  [.5, .5, .5, .5, .5, .5, .5, .5, 1, .5, .5, .5, 1, .5, .5, .5],
+                  [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7.5, 8, 8.5, 9, 10.5, 11, 11.5]),
+    "amazing-grace-smooth": ([67, 72, 76, 72, 76, 74, 72, 69, 67], [1, 2, 0.5, 0.5, 2, 1, 2, 1, 2]),
     "vande-mataram": ([72, 72, 71, 72, 74, 72, 70, 69, 67, 67, 69, 67, 65, 67, 65, 64],
                       [2, 4, .5, .5, .5, .5, .5, .5, 3, 1, .5, .5, .5, .5, .5, .5]),
 }
@@ -234,7 +242,8 @@ def test_left_hand_chords_are_the_written_chords_music21(sid):
     assert got == CHORDS[sid], sid
 
 
-@pytest.mark.parametrize("sid", [s for s, lv in NEW.items() if lv >= 5 and s not in ("minuet-in-g", "vande-mataram")])
+# Fuer Elise: the arpeggios have 2 note names (A E A, E E G#), so music21 finds no triad there.
+@pytest.mark.parametrize("sid", [s for s, lv in NEW.items() if lv >= 5 and s not in ("minuet-in-g", "vande-mataram", "fur-elise")])
 def test_left_hand_fits_the_tune_music21(sid):
     """music21 oracle: each left-hand chord (keys together, or a broken chord / pattern of one
     group of clicks) is a major or minor triad, and the tune key at the start of each group of
@@ -347,42 +356,77 @@ def client(data_dir):
         yield c
 
 
-def _play(c, sid, hands, score=100.0):
+def _play(c, sid, hands, score=100.0, lead=None):
     published = []
     orig = c.hub.publish
     c.hub.publish = lambda e: (published.append(e), orig(e))
     try:
-        c.riyaz["practice"].sink({"type": "practice_end", "song_id": sid, "mode": "play", "hands": hands, "speed": 1.0,
-                                  "section": None, "completed": True, "accuracy": score, "stops": 10, "wrong": 0,
-                                  "errors": [], "score": {"total": score, "accuracy": score, "timing": 100, "length": 100,
-                                                          "stars": 3, "hit": 10, "missed": 0, "perfect": 10}})
+        evt = {"type": "practice_end", "song_id": sid, "mode": "play", "hands": hands, "speed": 1.0,
+               "section": None, "completed": True, "accuracy": score, "stops": 10, "wrong": 0,
+               "errors": [], "score": {"total": score, "accuracy": score, "timing": 100, "length": 100,
+                                       "stars": 3, "hit": 10, "missed": 0, "perfect": 10}}
+        if lead is not None:
+            evt["lead"] = lead
+        c.riyaz["practice"].sink(evt)
         c.riyaz["flush_results"]()
     finally:
         c.hub.publish = orig
     return [e for e in published if e.get("type") == "course"][-1]
 
 
-def test_level_3_to_8_and_all_done(client):
+def _play_entry(c, e, score=100.0):
+    """One done run of a ladder entry (Phase 6: a lead-sheet run, or a run of the song in a new key)."""
+    from riyaz import transpose
+
+    if e.get("task") == "lead":
+        return _play(c, e["song_id"], ["R"], score, lead={"score": 100, "covered": 4, "chords": 4})
+    if e.get("task") == "transpose":
+        v = transpose.ensure_version(songs.get(e["song_id"]))
+        return _play(c, v["id"], e["hands"], score)
+    return _play(c, e["song_id"], e["hands"], score)
+
+
+def test_level_3_to_10_and_all_done(client):
     c = client
     for e in course.ladder_entries():
         if e["level"] <= 3:
             _play(c, e["song_id"], e["hands"])
     st = c.get("/api/course").json()
-    assert st["level"] == 4 and st["max_level"] == 8 and st["current_song"] == "jingle-bells"
-    for lv in range(4, 9):
+    assert st["level"] == 4 and st["max_level"] == 10 and st["current_song"] == "jingle-bells"
+    for lv in range(4, 11):
         entries = [e for e in course.ladder_entries() if e["level"] == lv]
         assert c.get("/api/course").json()["level"] == lv
-        r = _play(c, entries[0]["song_id"], ["R"]) if entries[0]["hands"] != ["R"] else None
-        if r is not None:
-            assert not r["done"]  # one hand only: not done (the ladder hands are both hands)
+        if not entries[0].get("task"):
+            r = _play(c, entries[0]["song_id"], ["R"]) if entries[0]["hands"] != ["R"] else None
+            if r is not None:
+                assert not r["done"]  # one hand only: not done (the ladder hands are both hands)
         for e in entries:
-            r = _play(c, e["song_id"], e["hands"])
+            r = _play_entry(c, e)
+            assert r["done"], (lv, e["key"], r)
         assert r["level_up"] and r["level"] == lv + 1, (lv, r)
         st = c.get("/api/course").json()
         assert st["levels"][lv - 1]["done"] and st["bar_lines"]
     st = c.get("/api/course").json()
-    assert st["all_done"] and st["level"] == 9 and st["user_level"] == 8
-    assert c.get("/api/songs").json()["user_level"] == 8
+    assert st["all_done"] and st["level"] == 11 and st["user_level"] == 10
+    assert c.get("/api/songs").json()["user_level"] == 10
+
+
+def test_level_10_tasks_need_their_own_runs(client):
+    """Happy Birthday is done at Level 5. Its Level 10 lead-sheet task is a separate progress key:
+    a normal run does not finish it, a lead-sheet run below 80 does not either."""
+    c = client
+    c.post("/api/course/skip", json={"level": 10}, headers=OWN)
+    _play(c, "happy-birthday", ["R", "L"])
+    st = c.get("/api/course").json()
+    assert st["level"] == 10 and st["current_key"] == "happy-birthday#lead" and st["current_task"] == "lead"
+    r = _play(c, "happy-birthday", ["R"], 70, lead={"score": 40})
+    assert r["task"] == "lead" and not r["done"] and r["key"] == "happy-birthday#lead"
+    r = _play(c, "happy-birthday", ["R"], 85, lead={"score": 90})
+    assert r["done"] and r["newly_done"]
+    assert c.get("/api/course").json()["current_key"] == "clementine#lead"
+    lv10 = c.get("/api/course").json()["levels"][9]
+    assert [i["task"] for i in lv10["songs"]] == ["lead", "lead", "lead", "transpose"]
+    assert lv10["songs"][0]["done"] and lv10["songs"][0]["task_text"]
 
 
 def test_terms_unlock_at_their_levels_through_the_skill_moments(client):

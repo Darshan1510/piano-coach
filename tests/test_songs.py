@@ -29,7 +29,7 @@ def test_nine_builtin_songs_load():
     assert set(got) == set(BUILTIN)
     for sid, level in BUILTIN.items():
         assert got[sid]["level"] == level
-    assert len(list((ROOT / "data" / "songs").glob("*.json"))) == 23  # + 14 songs of Levels 4-8 (with Vande Mataram) (test_ladder.py)
+    assert len(list((ROOT / "data" / "songs").glob("*.json"))) == 25  # + 14 songs of Levels 4-8 (with Vande Mataram) + 2 of Level 9 (test_ladder.py)
 
 
 def _position_at(song, hand, beat):

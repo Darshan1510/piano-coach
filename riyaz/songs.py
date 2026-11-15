@@ -327,7 +327,8 @@ def summary(song: Song, user_level: int = config.USER_LEVEL_DEFAULT,
         from .simplify import changed_text
 
         out["version_of"] = {"id": meta.get("id"), "title": meta.get("title"), "level": meta.get("level"),
-                             "changed": meta.get("changed") or 0, "changed_text": changed_text(meta)}
+                             "changed": meta.get("changed") or 0, "changed_text": changed_text(meta),
+                             "kind": meta.get("kind") or "easy"}
     elif versions is not None and out.get("difficulty") and not out["difficulty"]["playable"]:
         fits = [v for v in versions.get(song["id"], []) if v["level"] <= user_level]
         if fits:

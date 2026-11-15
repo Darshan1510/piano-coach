@@ -150,7 +150,8 @@ LOCKED = re.compile(r"\b(sharp|flat|major|minor|scale|interval|progression|bar|m
 UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js",
             "/static/js/importer.js", "/static/js/terms.js", "/static/js/drill.js", "/static/js/course.js",
             "/static/js/basics.js", "/static/js/today.js", "/static/js/renderer.js", "/static/js/keyboard.js",
-            "/static/js/progress.js", "/static/js/editor.js", "/static/js/easy.js", "/static/js/intuition.js")
+            "/static/js/progress.js", "/static/js/editor.js", "/static/js/easy.js", "/static/js/intuition.js",
+            "/static/js/recorder.js", "/static/js/coach.js")
 
 
 def shown_strings(src: str) -> list[str]:

@@ -91,6 +91,7 @@ export class LearnScreen {
         const best = s.best !== null && s.best !== undefined ? `Best: ${Math.round(s.best)}%` : s.runs ? "Not done yet" : "New";
         card.innerHTML = `<div class="learn-song-top">${s.done ? `<span class="pill pill-ok">${ICON_OK}Done</span>` : s.current ? '<span class="card-eyebrow">Next song</span>' : "<span></span>"}<span class="muted learn-best">${best}</span></div>
           <h3></h3><p class="muted learn-song-meta">${handsWords(s.hands)} · ${lengthText(s.seconds)}</p>
+          ${s.task_text ? `<p class="learn-task">${T.markup(s.task_text)}</p>` : ""}
           <button class="btn ${s.current ? "primary" : ""}">${s.done ? "Play again" : "Practice"}</button>`;
         card.querySelector("h3").textContent = s.title;
         card.querySelector("button").addEventListener("click", (e) => { e.stopPropagation(); this.open(lv, s); });
@@ -111,6 +112,15 @@ export class LearnScreen {
     if (!lv.open) {
       const ok = await this.skip(lv.level);
       if (!ok) return;
+    }
+    // Phase 6 tasks: a lead sheet (play along, own left hand) or the song in a new key family.
+    if (s.task === "lead") return this.onOpenSong(s.song_id, { returnTo: "learn", preset: { mode: "play", lead: true } });
+    if (s.task === "transpose") {
+      const info = await this.api(`/api/songs/${encodeURIComponent(s.song_id)}/keys`).catch(() => null);
+      if (info && info.versions.length) {
+        return this.onOpenSong(info.versions[0].id, { returnTo: "learn", preset: { mode: "wait", hands: s.hands } });
+      }
+      return this.onOpenSong(s.song_id, { returnTo: "learn", preset: { mode: "wait", hands: s.hands, newKey: true } });
     }
     this.onOpenSong(s.song_id, { returnTo: "learn", preset: { mode: "wait", hands: s.hands } });
   }

@@ -28,6 +28,8 @@ const FAIL_TEXT = {
   too_early: { many: "Wait in the pause. Lift your hand, count 1, then press. Start again.", one: "Wait in the pause. Lift your hand, count 1, then press." },
   too_soft: { many: "Press harder for a loud sound.", one: "Press harder for a loud sound." },
   too_loud: { many: "Press more gently for a soft sound.", one: "Press more gently for a soft sound." },
+  pedal_up: { many: "Push the foot switch down first. Then press the key. Start again.", one: "Push the foot switch down first. Then press the key." },
+  pedal_down: { many: "Lift your foot first. Then press the key. Start again.", one: "Lift your foot first. Then press the key." },
 };
 
 export class DrillPanel {
@@ -168,12 +170,13 @@ export class DrillPanel {
     // The big text: finger number, soft/loud.
     let big = "";
     if (exp && exp.vel) big = exp.vel === "soft" ? "Soft" : "Loud";
+    else if (exp && exp.pedal) big = exp.pedal === "down" ? "Foot down" : "Foot up";
     else if (exp && this.opts.show === "finger" && exp.finger) big = `Finger ${exp.finger}`;
     this.$big.textContent = big;
     this.$big.classList.toggle("hidden", !big);
     this.beat = this.opts.stepBeats ? (this.opts.stepBeats[s.step] ?? 0) : 0;
     this.nextFinger = exp ? exp.finger || 0 : 0;
-    if (s.status === "active" && !["wrong_key", "too_short", "too_early", "too_soft", "too_loud", "try_ok", "hold"].includes(s.last)) {
+    if (s.status === "active" && !["wrong_key", "too_short", "too_early", "too_soft", "too_loud", "pedal_up", "pedal_down", "try_ok", "hold"].includes(s.last)) {
       this._say(exp && exp.rest ? "Lift your hand. Wait 1 count. Then press." : exp && exp.hold ? "Press the key and hold it down." : "", "go");
     }
   }

@@ -38,3 +38,8 @@
 - Song editor: copy and paste notes; a velocity (touch) lane; play only the selected notes; zoom with the trackpad pinch.
 - Easy versions: keep more of the tune at Levels 1-3 with 2 or 3 hand positions (now one 5-finger position).
 - Song list: a filter for "Your songs" (imported, easy versions, copies) and delete/rename.
+- Phase 6: dynamics check for the user's own left hand in lead-sheet runs (now only the tune is checked).
+- Phase 6: rename a recording; trim the silence at the start; a quantize choice for "Open as a song".
+- Phase 6: Danny Boy (Londonderry Air) for Level 9, from a checked public-domain source.
+- Phase 6: lead sheets and a new key family for imported songs from the Songs page (now from Level 10 in Practice).
+- Phase 6: pedal marks in the songs (where to press and lift the foot switch), when a foot switch is there.

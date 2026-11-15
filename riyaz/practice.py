@@ -27,6 +27,11 @@ Phase 4 play-along (mode "play"; fields added, old fields kept):
   practice_pass   {pass, score, speed, adapt, ...}: one pass of a repeated part (Loop, PLAN 6.3)
   practice_end    + score {total, stars, accuracy, timing, length, ...}, log {notes, extras}, span
   practice        + stop_beat (pause reason "stopped": "Continue from here?"), span, adapt, loop_step
+Phase 6 lead-sheet mode (play-along with ``lead``, riyaz/leadsheet.py; fields added):
+  practice_lead   {pitch, ok, chord, beat, song_id, run}: a key of the user's own left hand
+  practice_end    + lead {score, covered, chords, cover_pct, tone_pct, ...}; score.total = the
+                  combined total (score.tune_total = the tune alone)
+  practice        + lead (true in lead-sheet mode)
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
-from . import clock, config, feedback
+from . import clock, config, feedback, leadsheet
 from .matcher import EPS, PlayMatcher, WaitMatcher
 
 log = logging.getLogger("riyaz.practice")
@@ -149,6 +154,7 @@ class Practice:
         self._app_notes: list[dict] = []
         self._out_i = 0
         self._sounding: list[tuple[float, int]] = []  # (off time, pitch) on the keyboard output
+        self.lead: leadsheet.LeadScorer | None = None  # lead-sheet mode (Phase 6)
 
     # ------------------------------------------------------------------ life cycle
 
@@ -204,7 +210,7 @@ class Practice:
     def start(self, song: dict, mode: str = "wait", hands=("R",), speed: float = 1.0,
               section: int | None = None, count_in: bool = True, accompany: bool = True,
               output: str = "mac", breaks: list | None = None, loop: bool | None = None,
-              span=None, adapt: bool = True, loop_step: bool = True) -> dict:
+              span=None, adapt: bool = True, loop_step: bool = True, lead: bool = False) -> dict:
         if not isinstance(mode, str) or mode not in MODES:
             raise PracticeError("Select Watch or Play.")
         if not isinstance(output, str) or output not in OUTPUTS:
@@ -225,6 +231,16 @@ class Practice:
             if not ok or not (0 <= span[0] < span[1] <= song["end"] + EPS) or span[1] - span[0] < 0.5 - EPS:
                 raise PracticeError("The app cannot find this place in the song. Select a different part.")
             section = None
+        sheet = None
+        if lead:
+            # Lead-sheet mode: play along with the tune; the user makes the left hand (no app sound
+            # for it, no repeat: one pass is scored).
+            if mode != "play" or "R" not in present:
+                raise PracticeError("Select Play along and a song with a tune for this practice.")
+            sheet = leadsheet.sheet(song)
+            if sheet is None:
+                raise PracticeError("This song has no names for the left hand. Select a different song.")
+            hands, accompany, loop = ("R",), False, False
         msgs = []
         with self._lock:
             msgs = self._all_off()
@@ -254,6 +270,9 @@ class Practice:
                 self.breaks = _check_breaks(breaks, self.range_start, self.range_end)
             elif mode == "play":
                 self.play = PlayMatcher.for_song(song, hands, self.range_start, self.range_end)
+                if sheet is not None:
+                    split = leadsheet.melody_split(song, self.range_start, self.range_end) or sheet["split"]
+                    self.lead = leadsheet.LeadScorer(sheet["chords"], split, self.range_start, self.range_end)
             self.adapt_on = bool(adapt)
             self.loop_step = bool(loop_step)
             self._app_notes = self._select_app_notes()
@@ -287,6 +306,8 @@ class Practice:
                             # them again after "Continue"); else they would be extra notes.
                             self.play.rewind(b)
                             self._next = None
+                            if self.lead is not None:
+                                self.lead.rewind(b)
                 self._anchor(t, b)
                 self.running = False
                 self.paused = True
@@ -444,6 +465,8 @@ class Practice:
                         self._close_prev(t)
                     self._next = None
                     self.play.rewind(beat)
+                    if self.lead is not None:
+                        self.lead.rewind(beat)
                     lead_beats = float(self.song["time_signature"][0])
                     self.lead_to = beat
                 lead = beat - lead_beats  # before the range start = a short silent lead-in
@@ -534,6 +557,13 @@ class Practice:
             score = self.play.finish(self.range_end)
             log = self.play.log()
             stops = score["notes"]
+            if self.lead is not None:
+                # Lead-sheet mode: the total has the tune and the user's own left hand.
+                lead = self.lead.finish()
+                score["tune_total"] = score["total"]
+                score["total"] = leadsheet.combined(score["total"], lead["score"])
+                score["stars"] = 3 if score["total"] >= config.STARS[0] else 2 if score["total"] >= config.STARS[1] else 1
+                extra["lead"] = lead
             extra.update(score=score, accuracy=score["accuracy"], log=_cap_log(log),
                          errors=feedback.error_list(log)[:500])
         extra["span"] = list(self.span) if self.span else None
@@ -619,8 +649,16 @@ class Practice:
             return
         if b < self.range_start - config.PLAY_WINDOW_S * self.rate - EPS:
             return  # the count-in still runs
+        # MIDI events from riyaz/midi_io.py name the velocity "vel" (tests and tools: "velocity").
+        vel = evt.get("vel", evt.get("velocity"))
+        if self.lead is not None and self.lead.is_left(pitch):
+            res = self.lead.press(pitch, b, self.rate, vel)
+            self._in_t, self._in_beat = t, b
+            self._emit({"type": "practice_lead", "pitch": pitch, "ok": res["ok"], "chord": res["chord"],
+                        "beat": round(b, 4), "t": t, **ids})
+            return
         pm, pb = self._route(pitch, b)
-        res = pm.press(pitch, t, pb, self.rate, evt.get("velocity"))
+        res = pm.press(pitch, t, pb, self.rate, vel)
         if res["result"] == "ignored":
             return
         self._in_t, self._in_beat = t, b
@@ -752,7 +790,7 @@ class Practice:
             "count_in": self.count_in, "passes": self.passes, "wrong": self.wrong,
             "accompany": self.accompany, "output": self.output,
             "stop_beat": self.stop_beat, "lead_to": self.lead_to, "span": list(self.span) if self.span else None,
-            "adapt": self.adapt_on, "loop_step": self.loop_step,
+            "adapt": self.adapt_on, "loop_step": self.loop_step, "lead": self.lead is not None,
         }
 
 

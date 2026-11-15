@@ -38,6 +38,12 @@ Play-along (Phase 4):
       --jitter-ms 150 --shift-ms -80 --slip-rate 0.1 --hard-bar 3 --seed 1
       # with errors: random timing +-150 ms, all 80 ms early (rushing), 10% wrong neighbor keys,
       # wrong keys in group of clicks 3; print the findings of each run
+Phase 6:
+  uv run tools/fake_player.py --song happy-birthday --mode play --lead --follow URL
+      # lead-sheet mode: the tune in time + an own left hand (the 3 keys of each name, below the tune)
+  uv run tools/fake_player.py --song amazing-grace-smooth --hands RL --mode play --vel-l 100 --follow URL
+      # dynamics: a loud left hand (the app must say "Play the tune louder than the left hand")
+  --pedal-ok: the drills with a foot switch step get the CC 64 message (else: no foot switch, as the user)
 """
 
 from __future__ import annotations
@@ -177,7 +183,8 @@ def play_song(fp: "FakePlayer", song: dict, hands=("R",), speed: float = 1.0) ->
 
 
 def play_plan(song: dict, hands=("R",), jitter_ms: float = 0.0, shift_ms: float = 0.0, slip_rate: float = 0.0,
-              hard_bar: int | None = None, seed: int = 0, start: float = 0.0, end: float | None = None) -> dict:
+              hard_bar: int | None = None, seed: int = 0, start: float = 0.0, end: float | None = None,
+              vel: dict | None = None) -> dict:
     """Key events of a play-along player (Phase 4 acceptance 2), in song beats + a time offset.
 
     Each note: press at its beat + shift_ms + a random value in [-jitter_ms, +jitter_ms], release
@@ -206,7 +213,7 @@ def play_plan(song: dict, hands=("R",), jitter_ms: float = 0.0, shift_ms: float 
             if choices:
                 pitch = rng.choice(choices)
                 slips.append(n["start"])
-        events.append([n["start"], off, 1, pitch, n.get("vel", 80)])
+        events.append([n["start"], off, 1, pitch, (vel or {}).get(n["hand"], n.get("vel", 80))])
         events.append([n["start"] + n["dur"] * 0.9, off, 0, pitch, 0])
     return {"events": events, "slips": slips, "hard": hard, "bar_len": bpg}
 
@@ -227,8 +234,31 @@ def timed_events(plan: dict, beat_time) -> list[tuple[float, int, int, int]]:
     return sorted(out, key=lambda e: (e[0], e[1]))
 
 
+def lead_left_events(sheet: dict, start: float, end: float, vel: int = 60, wrong: bool = False) -> list[list]:
+    """Phase 6 lead-sheet mode: an own left hand. The 3 keys of each name (root position, below the
+    tune), together at the start of the name, held for 90% of it. wrong=True: keys a half step up
+    (not in the name)."""
+    sys.path.insert(0, str(ROOT))
+    from riyaz import leadsheet
+
+    out = []
+    split = sheet["split"]
+    for c in sheet["chords"]:
+        if c["start"] < start - 1e-6 or c["start"] >= end - 1e-6:
+            continue
+        root, suffix, _bass = leadsheet.parse(c["name"])
+        shape = leadsheet.SHAPES[suffix][:3]
+        low = max(p for p in range(36, split - 7) if p % 12 == root) if split > 44 else 36 + root
+        keys = [low + i + (1 if wrong else 0) for i in shape]
+        for k in keys:
+            out.append([c["start"], 0.0, 1, k, vel])
+            out.append([c["start"] + c["dur"] * 0.9, 0.0, 0, k, 0])
+    return out
+
+
 async def follow_play(base: str, fp: "FakePlayer", song_id: str, hands=("R",), speed: float = 1.0,
-                      plan_kw: dict | None = None, timeout: float = 300.0, section=None) -> dict:
+                      plan_kw: dict | None = None, timeout: float = 300.0, section=None, lead: bool = False,
+                      lead_wrong: bool = False) -> dict:
     """Play-along with the running app: start the run, read the song clock (anchor), press each
     key at its time (perf_counter: same clock as the app on this Mac). Returns the score, the
     findings and the automatic speed change of the "course" event."""
@@ -237,12 +267,17 @@ async def follow_play(base: str, fp: "FakePlayer", song_id: str, hands=("R",), s
     song = load_song(song_id, base)
     ws_url = base.replace("http://", "ws://") + "/ws"
     async with websockets.connect(ws_url) as ws:
-        st = _post(base, "/api/practice/start", {"song_id": song_id, "mode": "play", "hands": list(hands),
-                                                 "speed": speed, "count_in": True, "accompany": False,
-                                                 "section": section, "loop": False})
+        body = {"song_id": song_id, "mode": "play", "hands": list(hands), "speed": speed, "count_in": True,
+                "accompany": False, "section": section, "loop": False}
+        if lead:
+            body.update(lead=True, hands=["R"])
+            hands = ("R",)
+        st = _post(base, "/api/practice/start", body)
         run = st["run"]
         rng = st["range"]
         plan = play_plan(song, hands, start=rng[0], end=rng[1], **(plan_kw or {}))
+        if lead:
+            plan["events"] += lead_left_events(_get(base, f"/api/songs/{song_id}/lead"), rng[0], rng[1], wrong=lead_wrong)
         at, ab, rate = st["anchor_t"], st["anchor_beat"], st["rate"]
         events = timed_events(plan, lambda b: at + (b - ab) / rate)
         end = course = None
@@ -282,7 +317,9 @@ async def follow_play(base: str, fp: "FakePlayer", song_id: str, hands=("R",), s
             "findings": [f["id"] for f in course.get("findings") or []], "all_findings": course.get("all_findings"),
             "hard_bar_found": next((f["data"]["bar"] for f in course.get("findings") or [] if f["id"] == "hard_spot"), None),
             "adapt": (course.get("adapt") or {}).get("action"), "adapt_speed": (course.get("adapt") or {}).get("speed"),
-            "tips": tips, "hits": hits, "wrong_events": wrongs, "done": course.get("done")}
+            "tips": tips, "hits": hits, "wrong_events": wrongs, "done": course.get("done"),
+            "lead": end.get("lead"), "tune_total": sc.get("tune_total"), "task": course.get("task"),
+            "dynamics": course.get("dynamics")}
 
 
 def _post(base: str, path: str, body: dict) -> dict:
@@ -357,8 +394,9 @@ class AutoPlayer:
     """Plays what the app expects: drill steps (keys, hold, pause, soft/loud, keys together) and
     wait-mode stops. Call handle() with each WebSocket message."""
 
-    def __init__(self, fp: "FakePlayer", delay: float = 0.12, wrong: int = 0):
+    def __init__(self, fp: "FakePlayer", delay: float = 0.12, wrong: int = 0, pedal: bool = False):
         self.fp = fp
+        self.pedal = pedal  # Phase 6: send the foot switch (CC 64) for a drill step that needs it
         self.delay = delay
         self.wrong_left = wrong
         self.last_stop = None
@@ -400,9 +438,9 @@ class AutoPlayer:
                 wrong = next(p for p in range(max(pitches) + 1, 97) if p not in pitches and p % 12 != pitches[0] % 12)
             asyncio.get_running_loop().create_task(
                 self._press(pitches, vel=vel, hold=float(exp.get("hold") or 0), rest=float(exp.get("rest") or 0), wrong=wrong,
-                            seq=msg.get("seq")))
+                            seq=msg.get("seq"), pedal=exp.get("pedal") if self.pedal else None))
 
-    async def _press(self, pitches, vel=80, hold=0.0, rest=0.0, wrong=None, seq=None):
+    async def _press(self, pitches, vel=80, hold=0.0, rest=0.0, wrong=None, seq=None, pedal=None):
         while self._busy:
             await asyncio.sleep(0.01)
         self._busy = True
@@ -416,6 +454,9 @@ class AutoPlayer:
                 self.fp.note_off(wrong)
                 self.wrong_pressed += 1
                 return  # the drill sends a new state (a try starts again): it plans the right press
+            if pedal is not None:
+                self.fp.sustain(pedal == "down")
+                await asyncio.sleep(0.03)
             for p in pitches:
                 self.fp.note_on(p, vel)
             self.presses += 1
@@ -525,9 +566,13 @@ async def run_session(base: str, fp: "FakePlayer", minutes: int = 10, wrong: int
                 runs = []
                 for step in b["steps"]:
                     if step.get("mode") == "play":  # Phase 4: the keys are learned: play along
+                        if step.get("lead"):  # Phase 6: the lead-sheet task (moments first, before the start)
+                            for m in _get(base, f"/api/course/moments/{b['song_id']}?task=lead")["moments"]:
+                                await do_drill(link, {"source": "skill", "ref": m["id"]})
                         r = await follow_play(base, fp, b["song_id"], b["hands"], step["speed"] or 1.0,
-                                              section=step["section"])
-                        runs.append({"section": step["section"], "mode": "play", "score": r["score"], "done": r["done"]})
+                                              section=step["section"], lead=bool(step.get("lead")))
+                        runs.append({"section": step["section"], "mode": "play", "score": r["score"], "done": r["done"],
+                                     "lead": (r.get("lead") or {}).get("score")})
                         continue
                     r = await play_practice(link, b["song_id"], b["hands"], step["section"], step["speed"] or 1.0)
                     runs.append({"section": step["section"], "accuracy": r["end"].get("accuracy"),
@@ -763,6 +808,10 @@ def main() -> None:
                          "next_chord, find_melody, add_chords, jam, find_key, or all)")
     ap.add_argument("--answer", choices=("correct", "wrong"), default="correct", help="with --drill: right or wrong answers")
     ap.add_argument("--buttons", action="store_true", help="with --drill: answer with the buttons when there are buttons")
+    ap.add_argument("--lead", action="store_true", help="with --mode play: lead-sheet mode (own left hand)")
+    ap.add_argument("--lead-wrong", action="store_true", help="with --lead: left-hand keys that are not in the names")
+    ap.add_argument("--vel-r", type=int, help="play-along: touch (velocity) of every right-hand key")
+    ap.add_argument("--vel-l", type=int, help="play-along: touch (velocity) of every left-hand key")
     ap.add_argument("--tap", metavar="URL", help="do the latency check (tap with the click) in the app at URL; "
                                                  "uses --shift-ms and --jitter-ms")
     args = ap.parse_args()
@@ -875,7 +924,11 @@ def play_songs(args) -> None:
                 for k in range(args.runs):
                     kw = {"jitter_ms": args.jitter_ms, "shift_ms": args.shift_ms, "slip_rate": args.slip_rate,
                           "hard_bar": args.hard_bar, "seed": args.seed + k}
-                    r = asyncio.run(follow_play(args.follow, fp, sid, hands, args.speed, kw))
+                    vel = {h: v for h, v in (("R", args.vel_r), ("L", args.vel_l)) if v}
+                    if vel:
+                        kw["vel"] = vel
+                    r = asyncio.run(follow_play(args.follow, fp, sid, hands, args.speed, kw, lead=args.lead,
+                                                lead_wrong=args.lead_wrong))
                     exact = not (args.jitter_ms or args.shift_ms or args.slip_rate or args.hard_bar)
                     ok = r["score"] >= 98 if exact else True
                     failed += not ok

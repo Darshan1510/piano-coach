@@ -18,10 +18,15 @@ one tip at a time), "Continue from here" when you stop, after-run findings with 
 of the place, "Show me" and a practice button, automatic speed changes, spaced repetition of
 learned song parts, a skill model, and the Progress page (skills, calendar, results over time).
 Phase 5a: song simplifier (easy versions for your level), song editor, audio import.
-Phase 5b (this version): course Levels 4-8 (13 more songs: black keys, keys together, patterns,
+Phase 5b: course Levels 4-8 (13 more songs: black keys, keys together, patterns,
 longer runs, rhythm feels keherwa and dadra) with their skill moments and words, and "Ear games"
 (echo, the jump between 2 keys, shapes of 3 keys, happy or sad, what comes next, find the tune,
 add keys together to a tune, jam). The daily practice picks one game for your weakest skill.
+Phase 6 (this version): Levels 9-10 (Für Elise opening, Amazing Grace with smooth changes,
+lead sheets: only the tune and the names, you make the left hand; a song in a new key family),
+soft and loud tips, an optional foot switch lesson (hidden without a foot switch), a recorder in
+Free play (play back, save as a MIDI file, open as a song), a weekly summary on the Progress page
+with an optional local coach (Ollama, off by default; not installed), and the release installer.
 See `PLAN.md` and `PROGRESS.md`.
 
 ## Install (release build)
@@ -30,9 +35,15 @@ See `PLAN.md` and `PROGRESS.md`.
 curl -LsSf https://raw.githubusercontent.com/Darshan1510/piano-coach/main/install.sh | sh
 ```
 
-The installer puts `Riyaz.app` in `~/Downloads` and opens it. Releases start in Phase 6.
+The installer downloads `Riyaz-macOS-arm64.zip` and `Riyaz-macOS-arm64.zip.sha256` from the latest
+GitHub release, checks the SHA-256, puts `Riyaz.app` in `~/Applications`, removes the quarantine
+attribute from that app only (the app is not signed), and opens it. Options:
+`--system` (install in `/Applications`), `--base` (the small app without audio import),
+`--version v0.1.0`, `--zip FILE` or `--zip file:///path/Riyaz-macOS-arm64.zip` (a local file; the
+checksum comes from `FILE.sha256` or `--sha256 FILE|HEX`), `--dest DIR`, `--no-open`.
+A bad or missing checksum stops the install.
 
-If macOS says the app is "damaged": the app is not signed. Run `xattr -dr com.apple.quarantine ~/Downloads/Riyaz.app`.
+If macOS says the app is "damaged": run `xattr -dr com.apple.quarantine ~/Applications/Riyaz.app`.
 
 ## You need
 
@@ -146,8 +157,18 @@ No demucs, torch or piano-transcription model (not installed; see `DECISIONS.md`
 ```sh
 make build-mac      # dist/Riyaz.app (uses Riyaz.spec), with audio import: about 290 MB
 make build-mac-base # dist/Riyaz.app without audio import: about 45 MB
-make release-mac VERSION=v0.1.0   # build + GitHub release with gh (Phase 6)
+make release-zip VARIANT=full     # build + dist/release/Riyaz-macOS-arm64.zip + .sha256 (no upload)
+make release-zip VARIANT=base     # the same for the base app: Riyaz-macOS-arm64-base.zip
+make release-mac VERSION=v0.1.0   # release-zip, then tools/release.sh prints the gh command
 ```
+
+Release steps (same flow as DocKit, by hand on this Mac):
+
+1. Commit and push the code. Log in once with `gh auth login`.
+2. Run `make release-mac VERSION=v0.1.0 VARIANT=full` (or `base`). It checks the zip and its checksum
+   and prints the `gh release create` command.
+3. Run the printed command (it starts with `RELEASE_YES=1`) to upload the zip and the `.sha256` file.
+4. Test: `sh install.sh --version v0.1.0`.
 
 ## Clean
 

@@ -10,13 +10,15 @@ Kinds:
 - ``steps``:   a list of steps, ``tries`` times. A step is ``{"any": [pitches]}`` (one of these
   keys; ``null`` = any key) or ``{"all": [pitches]}`` (these keys together, or in order within
   300 ms). Options: ``hold`` (seconds to hold the key down), ``rest`` (seconds with no key down
-  before this step), ``vel`` ("soft" or "loud"), ``finger``/``hand`` (for the screen).
+  before this step), ``vel`` ("soft" or "loud"), ``finger``/``hand`` (for the screen),
+  ``pedal`` ("down" or "up": the foot switch, MIDI CC 64, must be down or up at the press; Phase 6,
+  only in the optional pedal moment: the app shows it only after the keyboard sent a CC 64).
   With tries > 1 (skill moments), a mistake starts the try again. With 1 try, the step waits.
 - ``find_key``: ``rounds`` rounds; each round names a white key ("Play F"); any octave counts.
 
 Events: ``drill`` (full state, after each change), ``drill_hit``, ``drill_wrong`` {pitch, reason}.
 reasons: "wrong_key", "too_short" (held less than ``hold``), "too_early" (pressed in the
-pause), "too_soft", "too_loud".
+pause), "too_soft", "too_loud", "pedal_up" (the foot switch must be down), "pedal_down" (it must be up).
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ class Drill:
         self.seq = 0
         self.run = 0
         self.spec: dict | None = None
+        self.pedal = False  # the foot switch (CC 64) is down; it stays known between drills
         self.on_pass: Callable[[dict, dict], dict | None] | None = None
         self._reset()
 
@@ -129,6 +132,10 @@ class Drill:
 
     def on_midi(self, evt: dict) -> None:
         kind = evt.get("type")
+        if kind == "cc" and evt.get("control") == config.SUSTAIN_CC:
+            with self._lock:
+                self.pedal = int(evt.get("value", 0)) >= 64
+            return
         if kind not in ("note_on", "note_off"):
             return
         with self._lock:
@@ -196,6 +203,13 @@ class Drill:
         keys = step.get("all") or step.get("any")
         if keys is not None and pitch not in keys:
             self._fail(pitch, "wrong_key", t)
+            return
+        pedal = step.get("pedal")
+        if pedal == "down" and not self.pedal:
+            self._fail(pitch, "pedal_up", t)
+            return
+        if pedal == "up" and self.pedal:
+            self._fail(pitch, "pedal_down", t)
             return
         want = step.get("vel")
         if want:

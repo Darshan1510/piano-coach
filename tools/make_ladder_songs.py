@@ -1,4 +1,4 @@
-"""Write the built-in songs of course Levels 4-8 (PLAN 8.3) to data/songs/*.json.
+"""Write the built-in songs of course Levels 4-9 (PLAN 8.3) to data/songs/*.json.
 
 The melodies are public-domain tunes (see each "credit" and DECISIONS.md "Phase 5b"). The
 arrangements, the left-hand parts and the fingering are written for Riyaz, by hand, in the
@@ -308,6 +308,38 @@ VANDE_MATARAM_R = (VM_BANDE
 # Left hand: a drone of Sa and Pa (C and G together), one long sound in each bar, like a tanpura.
 VANDE_MATARAM_L = [("C3+G3", 4, "5+1")] * 34
 
+# Level 9 (Phase 6). Fuer Elise (Beethoven, WoO 59), the opening: the pickup, bars 1-7 and the
+# first ending. Notes typed from the Mutopia Project LilyPond source (public domain):
+# https://www.mutopiaproject.org/ftp/BeethovenLv/WoO59/fur_Elise_WoO59/fur_Elise_WoO59.ly
+# ("\\time 3/8", "\\partial 8 e''16 dis'' e'' dis'' e'' b' d'' c'' a'8 r16 c' e' a' b'8 r16 e' gis' b'
+# c''8 r16 e' e'' dis'' e'' dis'' e'' b' d'' c'' a'8 r16 c' e' a' b'8 r16 e' c'' b'", ending "a'4";
+# left hand "a,16 e a r16 r8", "e,16 e gis r r8"). One click = one eighth note (3/8): a sixteenth = 0.5.
+# The last A is held to the end of its group of 3 clicks (the source: a quarter note, then the repeat).
+FE_TURN = [("E5", 0.5, 5), ("D#5", 0.5, 4), ("E5", 0.5, 5), ("B4", 0.5, 2), ("D5", 0.5, 4), ("C5", 0.5, 3)]
+FUR_ELISE_R = ([("r", 2, None), ("E5", 0.5, 5), ("D#5", 0.5, 4)] + FE_TURN
+               + [("A4", 1, 1), ("r", 0.5, None), ("C4", 0.5, 1), ("E4", 0.5, 2), ("A4", 0.5, 4),
+                  ("B4", 1, 5), ("r", 0.5, None), ("E4", 0.5, 1), ("G#4", 0.5, 3), ("B4", 0.5, 4),
+                  ("C5", 1, 5), ("r", 0.5, None), ("E4", 0.5, 1), ("E5", 0.5, 5), ("D#5", 0.5, 4)]
+               + FE_TURN
+               + [("A4", 1, 1), ("r", 0.5, None), ("C4", 0.5, 1), ("E4", 0.5, 2), ("A4", 0.5, 4),
+                  ("B4", 1, 5), ("r", 0.5, None), ("E4", 0.5, 1), ("C5", 0.5, 4), ("B4", 0.5, 3),
+                  ("A4", 3, 2)])
+# Left hand: the broken chords (one key after the other, low to high: an arpeggio) of A minor and E major.
+FE_AM = [("A2", 0.5, 5), ("E3", 0.5, 2), ("A3", 0.5, 1), ("r", 1.5, None)]
+FE_E = [("E2", 0.5, 5), ("E3", 0.5, 2), ("G#3", 0.5, 1), ("r", 1.5, None)]
+FUR_ELISE_L = ([("r", 6, None)] + FE_AM + FE_E + FE_AM + [("r", 3, None)] + FE_AM + FE_E
+               + [("A2", 0.5, 5), ("E3", 0.5, 2), ("A3", 2, 1)])
+
+# Amazing Grace with smooth chord changes (inversions): the same tune as the Level 5 song (AG_R,
+# Excell 1900), the left hand keeps C3 (or moves one key) from chord to chord: C = C E G,
+# F/C = C F A, Am/C = C E A, G/B = B D G. The left hand is soft, the tune louder.
+_AG_C, _AG_F, _AG_AM, _AG_G = ("C3+E3+G3", 3, "5+3+1"), ("C3+F3+A3", 3, "5+2+1"), ("C3+E3+A3", 3, "5+3+1"), \
+    ("B2+D3+G3", 3, "5+3+1")
+AG_SMOOTH_L = [("r", 3, None), _AG_C, _AG_C, _AG_F, _AG_C, _AG_C, _AG_AM, _AG_G, _AG_C, _AG_C, _AG_F, _AG_C,
+               _AG_C, _AG_G, _AG_C]
+AG_SMOOTH_CHORDS = [(3 + 3 * i, 3, nm) for i, nm in enumerate(
+    ["C", "C", "F/C", "C", "C", "Am/C", "G/B", "C", "C", "F/C", "C", "C", "G/B", "C"])]
+
 PD = "public domain"
 SONGS = [
     dict(id="jingle-bells", title="Jingle Bells", level=4, order=1, bpm=100, ts=(4, 4), key="F major",
@@ -366,6 +398,16 @@ SONGS = [
                 "Notes from Swarabitan vol. 46 (Sa = C); grace notes left out. Check by ear. "
                 "Left hand (a drone of C and G) and fingering: Riyaz.",
          R=VANDE_MATARAM_R, L=VANDE_MATARAM_L),
+    dict(id="fur-elise", title="Für Elise (opening)", level=9, order=1, bpm=96, ts=(3, 8), key="A minor",
+         credit=f"Ludwig van Beethoven (1810, WoO 59), {PD}. Notes from the Mutopia Project edition; "
+                "the opening only. Fingering: Riyaz.",
+         R=FUR_ELISE_R, L=FUR_ELISE_L, vel=(56, 44), parts=[(0, 15), (15, 27)],
+         chords=[(6, 3, "Am"), (9, 3, "E"), (12, 3, "Am"), (18, 3, "Am"), (21, 3, "E"), (24, 3, "Am")]),
+    dict(id="amazing-grace-smooth", title="Amazing Grace (smooth chords)", level=9, order=2, bpm=84, ts=(3, 4),
+         key="C major",
+         credit=f"Traditional American tune 'New Britain' (1829), words by John Newton (1779), {PD}. "
+                "Left hand with smooth chord changes and fingering: Riyaz.",
+         R=AG_R, L=AG_SMOOTH_L, vel=(86, 50), chords=AG_SMOOTH_CHORDS),
 ]
 
 
@@ -458,8 +500,9 @@ def hand_positions(notes: list[dict], hand: str) -> list[dict]:
 
 
 def build(spec: dict) -> dict:
-    right, r_end = hand_notes(spec["R"], "R", 80)
-    left, l_end = hand_notes(spec.get("L") or [], "L", 62)
+    vel_r, vel_l = spec.get("vel", (80, 62))  # Level 9: soft songs, the tune louder than the left hand
+    right, r_end = hand_notes(spec["R"], "R", vel_r)
+    left, l_end = hand_notes(spec.get("L") or [], "L", vel_l)
     num = spec["ts"][0]
     end = max(r_end, l_end)
     assert abs(r_end - end) < 1e-6 or not right, (spec["id"], r_end, l_end)

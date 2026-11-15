@@ -160,7 +160,7 @@ SONG_DONE_SPEED = 1.0
 SONG_DONE_SCORE = 80
 WAIT_DONE_MAX_LEVEL = 1  # a wait-mode run can finish a ladder song of this level or lower
 SKILL_TRIES = 3  # a skill moment passes after 3 correct tries (PLAN 8.2)
-MAX_COURSE_LEVEL = 8  # levels with content in this version (Phase 5b: Levels 4-8)
+MAX_COURSE_LEVEL = 10  # levels with content in this version (Phase 6: Levels 9-10)
 
 SESSION_MINUTES = (10, 15, 20, 30)  # PLAN 9.1
 SESSION_MINUTES_DEFAULT = 20
