@@ -3,6 +3,18 @@
 A daily piano-practice coach for a MIDI keyboard (built for the Yamaha YPT-320) on macOS.
 Riyaz is Hindi/Urdu for "daily practice".
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Home](docs/screenshots/home-dark.png) Home: start today's practice, streak, level and keyboard settings. | ![Today](docs/screenshots/today-dark.png) Today: the daily plan with a warm-up, your song, a review and an ear game. |
+| ![Practice](docs/screenshots/practice-dark.png) Play along: falling notes with finger numbers; the keys you press light up. | ![Result](docs/screenshots/result-dark.png) After a run: the score, stars and tips with a button to practice each one. |
+| ![Learn](docs/screenshots/learn-dark.png) Learn: the course ladder from Level 1 to Level 10. | ![Songs](docs/screenshots/songs-dark.png) Songs: the built-in songs by level, and "Import a song". |
+| ![Progress](docs/screenshots/progress-dark.png) Progress: your week, your skills and your results. | ![Song editor](docs/screenshots/editor-dark.png) Song editor: change notes, fingers, hands and parts on a piano roll. |
+| ![Lead sheet](docs/screenshots/lead-sheet-dark.png) Lead-sheet mode: the tune and the key-group names; you make the left hand. | ![Ear games](docs/screenshots/ear-games-dark.png) Ear games: short games for your ear, one more at each level. |
+| ![Free play](docs/screenshots/free-play-dark.png) Free play: the keys you press, the name of the keys together, and a recorder. | ![Home, light theme](docs/screenshots/home-light.png) Home in the light theme. |
+| ![Practice, light theme](docs/screenshots/practice-light.png) Play along in the light theme. | |
+
 Phase 1: MIDI connection, setup and calibration, a live 61-key keyboard on the screen with note
 names and chord names, and a Mac piano sound.
 Phase 2: 6 built-in songs (Levels 1-2), falling notes with finger numbers and a hand
