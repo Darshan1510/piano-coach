@@ -234,3 +234,36 @@ def test_wait_mode_end_to_end_with_fake_player(live_server):
     print("\nWAIT MODE", json.dumps(r))
     assert r["completed"] and r["stops"] == 24 and r["hits"] == 24
     assert r["wrong_events"] == 2 and r["wrong_reported"] == 2 and r["advanced_on_wrong"] == 0
+
+
+def test_intuition_exercises_end_to_end_with_fake_player(live_server):
+    """Phase 5 acceptance 3: each intuition exercise with the fake player, over the virtual port:
+    right answers score 100, wrong answers a low score. (Full length: `tools/fake_player.py
+    --drill all --follow URL --answer correct|wrong`.) Short runs: 1 round, a jam of 4 groups."""
+    import urllib.request
+
+    from tools.fake_player import INTUITION_IDS, run_find_key, run_intuition
+
+    req = urllib.request.Request(f"{live_server}/api/course/skip", data=json.dumps({"level": 8}).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req, timeout=5).read()
+    results = []
+    with FakePlayer(PORT) as fp:
+        wait_connected(live_server, PORT)
+        for ex in INTUITION_IDS:
+            for answer in ("correct", "wrong"):
+                r = asyncio.run(run_intuition(live_server, fp, ex, answer, seed=7, rounds=1, bars=4, timeout=60))
+                results.append(r)
+                if answer == "correct":
+                    assert r["score"] == 100 and r["wrong_events"] == 0, r
+                else:
+                    assert r["score"] <= 20, r
+                    if ex not in ("jam", "add_chords"):
+                        assert r["wrong_events"] >= 2, r
+        for answer in ("correct", "wrong"):  # buttons instead of keys
+            r = asyncio.run(run_intuition(live_server, fp, "major_minor", answer, seed=3, rounds=2, use_buttons=True))
+            assert (r["score"] == 100) if answer == "correct" else (r["score"] == 0), r
+        r = asyncio.run(run_find_key(live_server, fp, "correct", rounds=3))
+        assert r["score"] == 100 and r["wrong"] == 0, r
+        results.append(r)
+    print("\nINTUITION", json.dumps(results))

@@ -18,11 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse
 
-from . import clock, config, course as course_mod, feedback, review, session as session_mod, skills as skills_mod, songs
+from . import clock, config, course as course_mod, editor as editor_mod, feedback, review, session as session_mod, \
+    simplify, skills as skills_mod, songs
 from .course import Course, CourseError
 from .db import Store
 from .drill import Drill, DrillError
-from .importers import midi_import
+from . import intuition as intuition_mod
+from .intuition import Intuition, IntuitionError
+from .importers import audio_import, midi_import
 from .midi_io import MidiService
 from .practice import Practice, PracticeError, clamp_speed
 from .session import Activity, Reminder, SessionError, Sessions
@@ -173,11 +176,13 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             return int((vr[0] + vr[1]) / 2) if vr and vr[1] > vr[0] else 64
 
         drill = Drill(hub.publish, vel_split=vel_split)
+        intuition = Intuition(hub.publish)  # intuition exercises (PLAN 10), riyaz/intuition.py
 
         def sink(evt: dict) -> None:
             hub.publish(evt)  # the UI gets the key first (live keyboard)
             practice.on_midi(evt)  # then the wait-mode matcher (it can send practice events)
             drill.on_midi(evt)  # then the drill (keyboard basics, skill moments, "Find the key")
+            intuition.on_midi(evt)  # then the intuition exercise (ear games)
             tapcheck.on_midi(evt)  # then the latency check ("tap with the click")
             if evt.get("type") == "note_on" and evt.get("reason") is None:
                 activity.press()
@@ -185,7 +190,10 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         midi = MidiService(store, sink=sink, poll_interval=poll_interval)
         practice.midi = midi
         midi.echo_filter = practice.echo.is_echo  # song notes sent to the keyboard that come back
-        state.update(midi=midi, practice=practice, drill=drill, tapcheck=tapcheck)
+        intuition.midi = midi
+        intuition.echo = practice.echo  # the same echo guard for the notes of the ear games
+        state.update(midi=midi, practice=practice, drill=drill, tapcheck=tapcheck, intuition=intuition)
+        state["audio"] = audio_import.AudioJobs(user_level=lambda: course.user_level())
         if start_midi:
             await asyncio.to_thread(midi.start)
             reminder.start()
@@ -193,8 +201,10 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
             yield
         finally:
             reminder.stop()
+            state["audio"].stop_all()
             activity.flush()
             await asyncio.to_thread(practice.close)
+            await asyncio.to_thread(intuition.close)
             await asyncio.to_thread(midi.stop)
             await asyncio.to_thread(results.shutdown, True)
             store.close()
@@ -260,6 +270,13 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
                 return
             if evt.get("mode") == "play":
                 after_play(evt, result)
+            if result.get("level_up"):
+                # PLAN 8.4: after a level-up, a new easy version of the user's songs for the new level.
+                try:
+                    result["new_versions"] = simplify.new_versions_after_level_up(c.user_level())
+                except Exception:
+                    log.exception("Cannot make the easy versions")
+                    result["new_versions"] = []
             unlocked = []
             if evt.get("song_id") in course_mod.content()["demo_songs"] and evt.get("completed"):
                 done = c.complete_basics_task("b3-demo")
@@ -347,6 +364,20 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     async def practice_state():
         return practice().state()
 
+    # One key activity at a time (practice, ear game, the "Find the key" drill, the tap check):
+    # each start stops the others. Only active ones are stopped (no extra state events).
+
+    def stop_others(keep: str, keep_practice: bool = False) -> None:
+        if keep != "practice" and not keep_practice and "practice" in state and state["practice"].song is not None:
+            state["practice"].stop()
+        if keep != "drill" and "drill" in state and state["drill"].state().get("status") == "active":
+            state["drill"].stop()
+        if keep != "intuition" and "intuition" in state and \
+                state["intuition"].state().get("status") not in ("idle", "done", "stopped"):
+            state["intuition"].stop()
+        if keep != "tapcheck" and "tapcheck" in state and state["tapcheck"].active:
+            state["tapcheck"].cancel()
+
     # Practice calls can send MIDI (notes off) and wait for the MIDI thread: run them in a thread.
 
     @app.post("/api/practice/start")
@@ -361,6 +392,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         hands = body.get("hands")
         opts = practice_options()
         practice().unlocked = set(await asyncio.to_thread(state["store"].terms))  # tip words (PLAN 7.4)
+        await asyncio.to_thread(stop_others, "practice")
         try:
             return await asyncio.to_thread(
                 practice().start,
@@ -407,8 +439,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
 
     pending: OrderedDict[str, midi_import.ParsedMidi] = OrderedDict()
 
-    async def read_limited(request: Request) -> bytes:
-        limit = config.IMPORT_MAX_BYTES
+    async def read_limited(request: Request, limit: int = config.IMPORT_MAX_BYTES) -> bytes:
         mb = limit // (1024 * 1024)
         too_large = f"The file is too large. The limit is {mb} MB. Select a smaller file."
         size = request.headers.get("content-length")
@@ -456,7 +487,117 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
         except OSError:
             log.exception("Cannot save the imported song")
             raise HTTPException(500, "The app cannot save the song. Make sure that the disk has free space.")
-        return {"song": songs.summary(song, user_level())}
+        return await asyncio.to_thread(imported_cards, song)
+
+    def imported_cards(song: dict) -> dict:
+        """The card of an imported song, and of its easy version for the user's level (PLAN 8.4)."""
+        level = user_level()
+        easy = None
+        try:
+            easy = simplify.ensure_level_version(song, level) or simplify.level_version(
+                songs.load_all(), song["id"], level)
+        except (simplify.SimplifyError, songs.SongError, OSError):
+            log.exception("Cannot make the easy version")
+        versions = simplify.versions_of(songs.load_all())
+        return {"song": songs.summary(song, level, versions),
+                "easy": songs.summary(easy, level, versions) if easy else None}
+
+    # ---------------------------------------------------------------- simplifier (Phase 5a, PLAN 11.2, 8.4)
+
+    @app.post("/api/songs/{song_id}/simplify")
+    async def simplify_song(song_id: str, body: dict = Body(default={})):
+        song = await asyncio.to_thread(songs.get, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        if song.get("version_of"):
+            src = await asyncio.to_thread(songs.get, str(song["version_of"].get("id")))
+            song = src or song
+        level = user_level()
+
+        target = body.get("level")  # tools and checks: a version for another level (1-10)
+        target = target if isinstance(target, int) and not isinstance(target, bool) else None
+
+        def run() -> dict:
+            if body.get("for_level") is True or target is not None:
+                v = simplify.for_level(song, target or level)
+                if v is None:
+                    raise simplify.SimplifyError("You can play this song now. The song needs no easy version.")
+            else:
+                v = simplify.make_version(song, left=str(body.get("left", "chords")), key=str(body.get("key", "same")),
+                                          slow=body.get("slow") is True, change=str(body.get("change", "bar")))
+            simplify.save(v)
+            versions = simplify.versions_of(songs.load_all())
+            return {"song": songs.summary(v, level, versions), "fits": v["level"] <= (target or level),
+                    "user_level": level}
+
+        try:
+            return await asyncio.to_thread(run)
+        except simplify.SimplifyError as exc:
+            raise HTTPException(400, str(exc))
+        except songs.SongError:
+            log.exception("Easy version not valid")
+            raise HTTPException(500, "The app cannot make an easy version of this song.")
+        except OSError:
+            log.exception("Cannot save the easy version")
+            raise HTTPException(500, "The app cannot save the song. Make sure that the disk has free space.")
+
+    # ---------------------------------------------------------------- song editor (Phase 5a, PLAN 11.4)
+
+    @app.post("/api/editor/save")
+    async def editor_save(body: dict = Body(...)):
+        song_id = str(body.get("song_id", ""))
+        try:
+            song = await asyncio.to_thread(editor_mod.save, body.get("song"), song_id, body.get("copy") is True,
+                                           user_level())
+        except editor_mod.EditorError as exc:
+            raise HTTPException(400, str(exc))
+        except OSError:
+            log.exception("Cannot save the edited song")
+            raise HTTPException(500, "The app cannot save the song. Make sure that the disk has free space.")
+        return {"song": song, "card": songs.summary(song, user_level()), "user_song": True}
+
+    @app.get("/api/editor/{song_id}")
+    async def editor_song(song_id: str):
+        song = await asyncio.to_thread(songs.get, song_id)
+        if song is None:
+            raise HTTPException(404, "The app cannot find this song.")
+        return {"song": song, "user_song": songs.is_user_song(song_id), "keys": list(editor_mod.KEY_NAMES)}
+
+    # ---------------------------------------------------------------- audio import (Phase 5a, PLAN 11.3)
+
+    def audio() -> audio_import.AudioJobs:
+        return state["audio"]
+
+    @app.get("/api/import/audio")
+    async def audio_info():
+        ok = audio_import.available()
+        return {"available": ok, "text": None if ok else audio_import.NOT_AVAILABLE_TEXT,
+                "max_mb": config.AUDIO_MAX_BYTES // (1024 * 1024), "max_minutes": config.AUDIO_MAX_SECONDS // 60}
+
+    @app.post("/api/import/audio")
+    async def audio_start(request: Request, name: str = "song.mp3"):
+        filename = name.replace("\\", "/").rsplit("/", 1)[-1][:120] or "song.mp3"
+        if not audio_import.available():
+            raise HTTPException(400, audio_import.NOT_AVAILABLE_TEXT)
+        data = await read_limited(request, config.AUDIO_MAX_BYTES)
+        try:
+            return await asyncio.to_thread(audio().start, data, filename)
+        except audio_import.AudioImportError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.get("/api/import/audio/{job_id}")
+    async def audio_job(job_id: str):
+        job = audio().get(job_id)
+        if job is None:
+            raise HTTPException(404, "The app cannot find this import. Select the file again.")
+        return job
+
+    @app.post("/api/import/audio/{job_id}/cancel")
+    async def audio_cancel(job_id: str):
+        job = await asyncio.to_thread(audio().cancel, job_id)
+        if job is None:
+            raise HTTPException(404, "The app cannot find this import. Select the file again.")
+        return job
 
     # Practice options that stay after a restart (speed, the click, the count-in). One user.
 
@@ -495,6 +636,7 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
 
     @app.post("/api/settings/latency/start")
     async def latency_check_start():
+        await asyncio.to_thread(stop_others, "tapcheck")
         return state["tapcheck"].start()
 
     @app.post("/api/settings/latency/finish")
@@ -585,7 +727,9 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
                 raise HTTPException(404, "The app cannot find this step of the practice.")
             return dict(sess["plan"]["blocks"][index]["drill"]), sid
         if source == "find_key":
-            return {"kind": "find_key", "id": "find_key", "rounds": config.FIND_KEY_ROUNDS,
+            n = body.get("rounds")
+            n = n if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 20 else config.FIND_KEY_ROUNDS
+            return {"kind": "find_key", "id": "find_key", "rounds": n,
                     "source": "find_key"}, state["sessions"].active_id
         raise HTTPException(400, "The app does not know this exercise.")
 
@@ -610,6 +754,8 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     async def drill_start(body: dict = Body(...)):
         spec, _ = drill_spec(body)
         seed = body.get("seed")
+        # One key activity at a time. A skill moment in a song keeps the paused song (it goes on after).
+        await asyncio.to_thread(stop_others, "drill", spec.get("source") == "skill")
         try:
             return await asyncio.to_thread(drill().start, spec, drill_passed,
                                            seed if isinstance(seed, int) and not isinstance(seed, bool) else None)
@@ -623,6 +769,108 @@ def create_app(start_midi: bool = True, poll_interval: float = config.HOTPLUG_IN
     @app.get("/api/drill")
     async def drill_state():
         return drill().state()
+
+    # ---------------------------------------------------------------- intuition exercises (PLAN 10, Phase 5b)
+
+    def intuition() -> Intuition:
+        return state["intuition"]
+
+    def intuition_done(spec: dict, summary: dict) -> dict:
+        """Save the result (it runs in the MIDI or the intuition thread): the skill model reads it."""
+        data = {k: v for k, v in summary.items() if isinstance(v, (int, float, str, bool, list, type(None)))}
+        data["key"] = spec.get("key")
+        state["store"].add_attempt(kind="intuition", item=spec["id"], day=course_mod.today(),
+                                   session_id=state["sessions"].active_id, completed=True,
+                                   accuracy=summary.get("score"), data=data)
+        return {}
+
+    def current_song_for_intuition(song_id=None) -> dict | None:
+        song = course_mod.get_song(song_id) if isinstance(song_id, str) else None
+        if song is None:
+            settings = session_mod.habit_settings(state["store"])
+            song = course_mod.get_song(settings["song_id"]) if settings["song_id"] else None
+        if song is None or song.get("source") == "course":
+            cur = course().current_song()
+            song = course_mod.get_song(cur["song_id"]) if cur else None
+        return song
+
+    def intuition_spec(body: dict) -> dict:
+        import random
+
+        source = body.get("source", "intuition")
+        seed = body.get("seed")
+        rng = random.Random(seed if isinstance(seed, int) and not isinstance(seed, bool) else None)
+        rounds = body.get("rounds") if isinstance(body.get("rounds"), int) and 1 <= body["rounds"] <= 12 else None
+        if source == "session":
+            sid, index = body.get("session_id"), body.get("block")
+            sess = state["store"].session(sid) if isinstance(sid, int) else None
+            if sess is None or not isinstance(index, int) or not 0 <= index < len(sess["plan"]["blocks"]) \
+                    or "intuition" not in sess["plan"]["blocks"][index]:
+                raise HTTPException(404, "The app cannot find this step of the practice.")
+            b = sess["plan"]["blocks"][index]["intuition"]
+            rng = random.Random(b.get("seed"))
+            return intuition_mod.make_spec(b["id"], course(), rng, current_song_for_intuition(b.get("song_id")),
+                                           source="session", ref=sid)
+        ex_id = str(body.get("id", ""))
+        ex = intuition_mod.exercise(ex_id)
+        if ex is None or ex_id not in intuition_mod.KINDS:
+            raise HTTPException(404, "The app does not know this exercise.")
+        if ex["level"] > course().user_level():
+            raise HTTPException(409, f"This exercise opens at Level {ex['level']}. Learn the songs before it first.")
+        bars = body.get("bars") if isinstance(body.get("bars"), int) and 2 <= body["bars"] <= 16 else None
+        return intuition_mod.make_spec(ex_id, course(), rng, current_song_for_intuition(body.get("song_id")),
+                                       rounds=rounds, source="intuition", bars=bars)
+
+    @app.get("/api/intuition")
+    async def intuition_list():
+        return {"exercises": await asyncio.to_thread(intuition_mod.public_list, course()),
+                "level": course().user_level(), "state": intuition().state()}
+
+    @app.get("/api/intuition/state")
+    async def intuition_state():
+        return intuition().state()
+
+    @app.post("/api/intuition/start")
+    async def intuition_start(body: dict = Body(...)):
+        output = body.get("output", "mac")
+        if output == "keyboard" and midi().status()["output"] is None:
+            raise HTTPException(409, "The app cannot send notes to the keyboard. "
+                                     "Turn off \"Play on the keyboard speaker\".")
+        try:
+            spec = await asyncio.to_thread(intuition_spec, body)
+            await asyncio.to_thread(stop_others, "intuition")  # one key activity at a time
+            return await asyncio.to_thread(intuition().start, spec, intuition_done, output)
+        except IntuitionError as exc:
+            raise HTTPException(400, str(exc))
+
+    def run_of(body: dict):
+        r = body.get("run")
+        return r if isinstance(r, int) and not isinstance(r, bool) else None
+
+    @app.post("/api/intuition/answer")
+    async def intuition_answer(body: dict = Body(...)):
+        try:
+            return await asyncio.to_thread(intuition().answer, str(body.get("choice", "")), run_of(body))
+        except IntuitionError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/intuition/replay")
+    async def intuition_replay(body: dict = Body(default={})):
+        try:
+            return await asyncio.to_thread(intuition().replay, run_of(body))
+        except IntuitionError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/intuition/tune-done")
+    async def intuition_tune_done(body: dict = Body(default={})):
+        try:
+            return await asyncio.to_thread(intuition().tune_done, run_of(body))
+        except IntuitionError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/intuition/stop")
+    async def intuition_stop():
+        return await asyncio.to_thread(intuition().stop)
 
     # ---------------------------------------------------------------- daily session and habit
 

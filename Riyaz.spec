@@ -30,6 +30,38 @@ for pkg in ("uvicorn", "fastapi", "starlette", "webview", "websockets", "mido", 
 
 datas += copy_metadata("mido")
 
+# Audio import (Phase 5a, DECISIONS.md): the light audio stack (basic-pitch with its CoreML model,
+# librosa, numpy, scipy ...) is bundled when RIYAZ_AUDIO is not "0" and the packages are in .venv.
+# The worker runs as "Riyaz --audio-worker" (main.py). RIYAZ_AUDIO=0 builds the base app only.
+import importlib.util
+
+AUDIO = os.environ.get("RIYAZ_AUDIO", "1") != "0" and importlib.util.find_spec("basic_pitch") is not None
+hiddenimports += ["riyaz.importers.audio_worker"]
+if AUDIO:
+    for pkg in ("basic_pitch", "librosa", "coremltools", "resampy", "soundfile", "audioread", "soxr", "pretty_midi",
+                "mir_eval", "lazy_loader"):
+        d, b, h = collect_all(pkg)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    for pkg in ("librosa", "basic-pitch", "numba", "llvmlite", "scipy", "numpy", "coremltools", "soundfile",
+                "resampy", "pretty_midi", "mir_eval", "scikit-learn", "audioread", "soxr", "lazy_loader", "pooch"):
+        try:
+            datas += copy_metadata(pkg)
+        except Exception:
+            pass
+    # Not needed by the worker: the pretty_midi sound font (6 MB).
+    datas = [d for d in datas if not d[0].endswith(".sf2")]
+# music21 is a dev-only test oracle (DECISIONS.md, Phase 3a): it and the packages that only it needs
+# stay out. scikit-learn: only coremltools' model converter and some librosa parts use it (not the
+# worker). Without the audio stack, numpy, scipy ... stay out too (other packages import them when
+# they exist).
+EXCLUDES = ["pytest", "tkinter", "music21", "PIL", "matplotlib", "contourpy", "kiwisolver", "fontTools", "cycler",
+            "jsonpickle", "webcolors", "chardet", "charset_normalizer", "pyparsing", "IPython", "pandas", "sklearn"]
+if not AUDIO:
+    EXCLUDES += ["numpy", "scipy", "numba", "llvmlite", "librosa", "basic_pitch", "coremltools", "sympy", "joblib",
+                 "cloudpickle", "requests", "urllib3", "dateutil", "more_itertools"]
+
 a = Analysis(
     ["main.py"],
     pathex=[],
@@ -39,11 +71,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # music21 is a dev-only test oracle (DECISIONS.md, Phase 3a). It and the packages that only it
-    # needs are in .venv, and some app packages import them when they exist: keep them out.
-    excludes=["pytest", "tkinter", "music21", "numpy", "PIL", "matplotlib", "contourpy", "kiwisolver",
-              "fontTools", "cycler", "joblib", "jsonpickle", "more_itertools", "webcolors", "requests",
-              "chardet", "charset_normalizer", "urllib3", "cloudpickle", "pyparsing", "dateutil"],
+    excludes=EXCLUDES,  # see above
     noarchive=False,
     optimize=0,
 )

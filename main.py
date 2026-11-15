@@ -6,9 +6,17 @@
   PORT=8123 uv run main.py   # other port (if busy, the app takes a free port)
 """
 
+import sys
+
+# The audio worker (riyaz/importers/audio_worker.py) runs as "Riyaz --audio-worker ..." in the
+# frozen app (no python -m there). It must not start the server or the window.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--audio-worker":
+    from riyaz.importers.audio_worker import main as _audio_worker
+
+    sys.exit(_audio_worker(sys.argv[1:]))
+
 import logging
 import socket
-import sys
 import threading
 import time
 import webbrowser

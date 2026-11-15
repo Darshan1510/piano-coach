@@ -785,7 +785,8 @@ def test_weakest_skill_picks_the_warmup_hand(client):
     warm = plan["blocks"][0]
     assert warm["focus"] == "left" and warm["hands"] == ["L"]
     assert all(s.get("hand", "L") == "L" for s in warm["drill"]["steps"])
-    assert plan["blocks"][3]["focus"] == "keys"
+    # Phase 5b: at Level 3 the ear games are open; "ear" has no results yet, so it is the weakest.
+    assert plan["blocks"][3]["focus"] == "ear" and plan["blocks"][3]["exercise"] in ("echo", "interval")
 
 
 # ---------------------------------------------------------------------- database and words

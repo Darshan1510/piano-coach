@@ -7,7 +7,8 @@
 #   make test             # run the tests
 #   make fake             # play a tune on the virtual keyboard port
 #   make latency          # measure key-to-app delay (app must run)
-#   make build-mac        # build dist/Riyaz.app
+#   make build-mac        # build dist/Riyaz.app (with the audio import, about 290 MB)
+#   make build-mac-base   # build dist/Riyaz.app without the audio import (about 45 MB)
 #   make release-mac VERSION=v0.1.0   # build and publish a GitHub release (macOS)
 #   make clean            # remove build output
 #   make distclean        # remove build output, .venv and all downloads (.cache, vendor-downloads)
@@ -31,7 +32,7 @@ TONE_URL := https://cdn.jsdelivr.net/npm/tone@$(TONE_VERSION)/build/Tone.js
 SAMPLES_URL := https://tonejs.github.io/audio/salamander
 SAMPLES := $(foreach o,1 2 3 4 5 6 7,$(foreach n,A C Ds Fs,$(n)$(o).mp3)) C8.mp3
 
-.PHONY: setup vendor run test fake latency build-mac build-mac-ci release-mac clean distclean
+.PHONY: setup vendor run test fake latency build-mac build-mac-base build-mac-ci release-mac clean distclean
 
 setup:
 	uv python install 3.12
@@ -59,6 +60,9 @@ latency:
 
 build-mac:
 	$(PYI) --noconfirm Riyaz.spec
+
+build-mac-base:
+	RIYAZ_AUDIO=0 $(PYI) --noconfirm Riyaz.spec
 
 build-mac-ci: build-mac
 	ditto -c -k --sequesterRsrc --keepParent "dist/$(NAME).app" "$(NAME)-macOS-$(ARCH).zip"

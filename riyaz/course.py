@@ -1,6 +1,7 @@
-"""Course: keyboard basics, skill moments, song ladder Levels 1-3 and music terms (PLAN 7.4, 8).
+"""Course: keyboard basics, skill moments, song ladder Levels 1-8 and music terms (PLAN 7.4, 8).
 
-Content is JSON in data/course/ (PLAN 8.5): terms.json, basics.json, skills.json, ladder.json.
+Content is JSON in data/course/ (PLAN 8.5): terms.json, basics.json, skills.json, ladder.json,
+intuition.json (the intuition exercises of PLAN 10; riyaz/intuition.py runs them).
 State is in the database (riyaz/db.py): course (level floor, basics tasks), skills_done, terms,
 song_progress.
 
@@ -74,6 +75,13 @@ def render_text(text: str, unlocked: set[str] | frozenset[str], explained: set[s
     return TERM_MARK.sub(sub, text)
 
 
+def plain_text(text: str, unlocked) -> str:
+    """The text for a place that shows plain text (lists, chips, a summary): like render_text, but
+    without the marks (an unlocked term shows as the term, not underlined)."""
+    return TERM_MARK.sub(lambda m: m.group(2) or content()["terms_by_id"][m.group(1)]["term"],
+                         render_text(text, unlocked))
+
+
 def shown_text(text: str) -> str:
     """The text with every term unlocked and no marks (checks: Rule 6 levels, sentence length)."""
     return TERM_MARK.sub(lambda m: m.group(2) or content()["terms_by_id"][m.group(1)]["term"], text)
@@ -127,6 +135,7 @@ def content() -> dict:
     basics = _read("basics.json")
     skills_raw = _read("skills.json")["skills"]
     levels = _read("ladder.json")["levels"]
+    intuition = _read("intuition.json")
     term_ids = {t["id"] for t in terms}
     skills = {}
     for s in skills_raw:
@@ -158,13 +167,44 @@ def content() -> dict:
     texts = [x for st in basics["steps"] for x in [st["title"], *st["text"], *(t["text"] for t in st["tasks"])]]
     texts += [x for sk in skills.values() for x in [sk["name"], *sk["text"]]]
     texts += [x for lv in levels for x in (lv["title"], lv["text"])] + [t["card"] for t in terms]
+    texts += [x for _lvl, _where, x in _intuition_texts(intuition)]
     for x in texts:
         for m in TERM_MARK.finditer(x):
             if m.group(1) not in known_terms:
                 raise ValueError(f"unknown term mark {m.group(0)} in: {x}")
     demo = songs.validate(basics["demo_song"])
     return {"terms": terms, "terms_by_id": {t["id"]: t for t in terms}, "basics": basics, "skills": skills,
-            "levels": levels, "demo_songs": {demo["id"]: demo}}
+            "levels": levels, "demo_songs": {demo["id"]: demo},
+            "intuition": intuition["exercises"], "intuition_by_id": {e["id"]: e for e in intuition["exercises"]},
+            "intuition_results": intuition["results"]}
+
+
+TEXT_KEYS = ("prompt", "prompt_major", "prompt_minor", "prompt_chord", "key_major", "key_minor")
+
+
+def _intuition_texts(intuition: dict) -> list[tuple[int, str, str]]:
+    """(level, where, text) of the intuition exercises. Names and button labels end with " name"
+    (short labels), the other texts are sentences."""
+    out = []
+    for e in intuition["exercises"]:
+        lvl = e["level"]
+        out.append((lvl, f"intuition {e['id']} name", e["name"]))
+        out += [(lvl, f"intuition {e['id']} text", x) for x in e["text"]]
+        out += [(lvl, f"intuition {e['id']} {k}" + (" name" if k.startswith("key_") else ""), e[k])
+                for k in TEXT_KEYS if k in e]
+        out += [(lvl, f"intuition {e['id']} choice {c['id']} name", c["label"]) for c in e.get("choices", [])]
+    # Results: the level of the first exercise that uses each text (all are Level 1 words).
+    out += [(1, f"intuition result {k}", v) for k, v in intuition["results"].items()]
+    # The {x} parts with sample values (the checks read the text as the user sees it).
+    return [(lvl, where, x.format_map(_SAMPLE)) for lvl, where, x in out]
+
+
+class _Sample(dict):
+    def __missing__(self, key):
+        return {"root": "C", "title": "Ode to Joy", "key": "C [[major_minor|major|with a happy sound]]", "name": "C"}.get(key, "4")
+
+
+_SAMPLE = _Sample()
 
 
 def demo_song(song_id: str) -> dict | None:
@@ -334,7 +374,8 @@ class Course:
         unlocked = []
         if s.get("unlocks") and self.store.unlock_term(s["unlocks"], self.now()):
             unlocked.append(s["unlocks"])
-        return {"skill": skill_id, "name": s["name"], "new": new, "unlocked": unlocked}
+        return {"skill": skill_id, "name": plain_text(s["name"], set(self.store.terms())), "new": new,
+                "unlocked": unlocked}
 
     # ---- terms (PLAN 7.4)
 
@@ -368,6 +409,7 @@ class Course:
         if not isinstance(level, int) or not 1 <= level <= config.MAX_COURSE_LEVEL:
             raise CourseError("The app does not have this level.")
         done = self.store.skills_done()
+        have = set(self.store.terms())
         needed = []
         for lv in content()["levels"]:
             if lv["level"] >= level:
@@ -375,7 +417,7 @@ class Course:
             for e in lv["songs"]:
                 for sk in e["skills"]:
                     if sk["id"] not in done:
-                        needed.append(self.skill(sk["id"])["name"])
+                        needed.append(plain_text(self.skill(sk["id"])["name"], have))
         return {"level": level, "needed": needed, "basics": not self.basics_done()}
 
     def skip_to(self, level: int) -> dict:
@@ -492,7 +534,7 @@ class Course:
                               "best_score": p.get("best_score"), "keys_ok": bool(p.get("keys_ok")),
                               "learned": bool(p.get("learned")),
                               "current": bool(cur and cur["song_id"] == e["song_id"]),
-                              "skills": [{"id": sk["id"], "name": self.skill(sk["id"])["name"],
+                              "skills": [{"id": sk["id"], "name": plain_text(self.skill(sk["id"])["name"], have),
                                           "done": sk["id"] in skills_done} for sk in e["skills"]]})
             levels.append({"level": n, "title": render_text(lv["title"], have), "text": render_text(lv["text"], have),
                            "done": self.level_done(n, done),
@@ -543,6 +585,7 @@ def course_texts() -> list[tuple[int, str, str]]:
         out.append((1, f"level {lv['level']} text", lv["text"]))
     for t in c["terms"]:
         out.append((t["level"], f"term {t['id']} card", t["card"]))
+    out += _intuition_texts({"exercises": c["intuition"], "results": c["intuition_results"]})
     return out
 
 

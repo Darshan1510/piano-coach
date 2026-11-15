@@ -13,10 +13,15 @@ Phase 3b: Today (a daily session: warm-up, song, review, "Find the key", with a
 timer and an end summary), Learn (keyboard basics and the song ladder, Levels 1-3, with skill
 moments inside the songs), Words (the music words that you learned), streak with a weekly
 streak freeze, daily goal, practice calendar and an optional Mac reminder (Settings).
-Phase 4 (this version): "Play along" (the song does not wait; points, stars, green/yellow/red keys,
+Phase 4: "Play along" (the song does not wait; points, stars, green/yellow/red keys,
 one tip at a time), "Continue from here" when you stop, after-run findings with a small picture
 of the place, "Show me" and a practice button, automatic speed changes, spaced repetition of
 learned song parts, a skill model, and the Progress page (skills, calendar, results over time).
+Phase 5a: song simplifier (easy versions for your level), song editor, audio import.
+Phase 5b (this version): course Levels 4-8 (13 more songs: black keys, keys together, patterns,
+longer runs, rhythm feels keherwa and dadra) with their skill moments and words, and "Ear games"
+(echo, the jump between 2 keys, shapes of 3 keys, happy or sad, what comes next, find the tune,
+add keys together to a tune, jam). The daily practice picks one game for your weakest skill.
 See `PLAN.md` and `PROGRESS.md`.
 
 ## Install (release build)
@@ -107,6 +112,14 @@ uv run tools/fake_player.py --song twinkle-twinkle --mode play --follow http://1
     --runs 3 --jitter-ms 150 --shift-ms -80 --slip-rate 0.1 --hard-bar 3 --seed 1   # errors -> findings
 ```
 
+Ear games (the app must run; Level 8 opens all games):
+
+```sh
+uv run tools/fake_player.py --drill all --follow http://127.0.0.1:8020 --answer correct   # each game: 100 points
+uv run tools/fake_player.py --drill jam --follow http://127.0.0.1:8020 --answer wrong     # low points
+uv run tools/make_ladder_songs.py --check   # the Level 4-8 song files match the tool (hand-written notes)
+```
+
 With a real keyboard connected, test with the fake port only: start the app with
 `RIYAZ_PORT_FILTER="Riyaz Fake Keyboard"` and `RIYAZ_DATA_DIR=<a temp folder>`.
 
@@ -115,10 +128,24 @@ Progress (sessions, song results, course, words, practice time) is in
 
 `music21` is in the dev group only (test oracle). It is never in `Riyaz.app`.
 
+### Audio import (Phase 5a)
+
+The audio packages are in the uv group `audio` (basic-pitch with its CoreML model, librosa, numpy,
+scipy; about 116 MB download, all in `.venv`). `uv sync` installs them. Without them
+(`uv sync --no-group audio`) the app works; only audio import is off.
+
+```sh
+uv run tools/make_test_audio.py ode-to-joy /tmp/ode.wav     # a test WAV from a song (known notes)
+uv run python -m riyaz.importers.audio_worker IN.wav OUT.json   # the worker alone (progress on stdout)
+```
+
+No demucs, torch or piano-transcription model (not installed; see `DECISIONS.md`, Phase 5a).
+
 ## Build
 
 ```sh
-make build-mac      # dist/Riyaz.app (uses Riyaz.spec)
+make build-mac      # dist/Riyaz.app (uses Riyaz.spec), with audio import: about 290 MB
+make build-mac-base # dist/Riyaz.app without audio import: about 45 MB
 make release-mac VERSION=v0.1.0   # build + GitHub release with gh (Phase 6)
 ```
 

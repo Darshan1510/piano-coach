@@ -135,6 +135,7 @@
               <div id="today-steps" class="today-steps"></div>
               <div id="today-drill-wrap" class="today-drill-wrap">
                 <div id="today-drill"></div>
+                <div id="today-ix" class="hidden"></div>
                 <button id="today-drill-start" class="btn btn-sm">Start</button>
               </div>
               <div class="today-foot">
@@ -252,6 +253,27 @@
         <div id="words-body"></div>
       </section>
 
+      <!-- ===================== Ear and feel: intuition exercises (Phase 5b, PLAN 10) ===================== -->
+      <section id="screen-intuition" class="screen hidden">
+        <div id="ix-home">
+          <p class="screen-intro muted">Short games for your ear and your feel for the keys. A new game opens at each level. The daily practice also picks one game for you each day.</p>
+          <div id="ix-list" class="ix-grid"></div>
+        </div>
+        <div id="ix-play" class="hidden">
+          <div class="card ix-play-card">
+            <div class="ix-play-head">
+              <button id="ix-back" class="btn btn-ghost" type="button"><svg class="icon" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><span>All games</span></button>
+              <h2 id="ix-title"></h2>
+              <label id="ix-output-row" class="switch ix-output hidden"><input type="checkbox" id="ix-output"><span class="switch-track"></span><span>Play on the keyboard speaker</span></label>
+            </div>
+            <div id="ix-text" class="ix-text muted"></div>
+            <div id="ix-panel"></div>
+            <div id="ix-drill" class="hidden"></div>
+            <button id="ix-drill-start" class="btn primary btn-lg hidden" type="button">Start</button>
+          </div>
+        </div>
+      </section>
+
       <!-- ===================== Keyboard basics (Phase 3b, opened from Today, Learn, Words) ===================== -->
       <section id="screen-basics" class="screen hidden">
         <ol class="stepper" id="basics-steps"></ol>
@@ -299,13 +321,19 @@
             <div class="card-eyebrow">Step 1</div>
             <h2>Select a file</h2>
             <p>Import a MIDI or audio file. Use only files that you have the right to use.</p>
-            <p class="muted">This version imports MIDI files only (.mid or .midi, 2 MB or less). Audio files come in a later version.</p>
+            <p class="muted">MIDI files: .mid or .midi, 2 MB or less. Audio files: .mp3, .wav or .m4a, <span id="ia-limit">40 MB or less and 6 minutes or less</span>.</p>
             <input id="im-file" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" class="visually-hidden" tabindex="-1">
+            <input id="ia-file" type="file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a" class="visually-hidden" tabindex="-1">
             <div class="btn-row">
               <button id="im-pick" class="btn primary btn-lg">
                 <svg class="icon" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>Select a MIDI file
               </button>
+              <button id="ia-pick" class="btn btn-lg">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 10v4"/></svg>Select an audio file
+              </button>
             </div>
+            <p id="ia-note" class="im-note">The app makes a first version of the notes. The version has errors. Listen and fix the notes in the editor.</p>
+            <p id="ia-missing" class="im-note muted hidden"></p>
             <p id="im-file-name" class="im-file-name muted hidden"></p>
             <p id="im-error" class="im-error hidden" role="alert"></p>
           </div>
@@ -344,14 +372,218 @@
             </div>
           </div>
 
+          <div id="ia-progress" class="card import-audio hidden" aria-live="polite">
+            <div class="card-eyebrow">Step 2</div>
+            <h2>The app finds the notes</h2>
+            <p class="muted">This can take some time: about 1 minute for 3 minutes of music. You can use other pages of the app at the same time.</p>
+            <ol class="ia-steps" id="ia-steps">
+              <li data-stage="load">Read the recording</li>
+              <li data-stage="notes">Find the notes</li>
+              <li data-stage="speed">Find the speed</li>
+              <li data-stage="song">Make the song and the easy version</li>
+            </ol>
+            <div class="ia-bar" role="progressbar" aria-label="Progress of the import" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ia-bar-fill"></span></div>
+            <p id="ia-status" class="muted ia-status"></p>
+            <div class="btn-row">
+              <button id="ia-cancel" class="btn btn-lg">Stop the import</button>
+            </div>
+          </div>
+
+          <div id="ia-done" class="card import-done hidden">
+            <div class="card-eyebrow">Done</div>
+            <h2>The first version of the notes is ready</h2>
+            <p>The app makes a first version of the notes. The version has errors. Listen and fix the notes in the editor.</p>
+            <p id="ia-facts" class="muted"></p>
+            <div id="ia-cards" class="im-card ia-cards"></div>
+            <div class="btn-row">
+              <button id="ia-edit" class="btn primary btn-lg">Open in the editor</button>
+              <button id="ia-another" class="btn btn-lg">Import a different file</button>
+            </div>
+          </div>
+
           <div id="im-done" class="card import-done hidden">
             <div class="card-eyebrow">Done</div>
             <h2>The song is in your list</h2>
+            <p id="im-done-text" class="muted"></p>
             <div id="im-card" class="im-card"></div>
             <div class="btn-row">
               <button id="im-another" class="btn btn-lg">Import a different file</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ===================== Make an easy version (Phase 5a, opened from Songs) ===================== -->
+      <section id="screen-easy" class="screen hidden">
+        <div class="pr-head">
+          <button id="ez-back" class="btn btn-ghost" title="Back to the song list">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Songs
+          </button>
+        </div>
+        <div class="import-grid">
+          <div class="card">
+            <div class="card-eyebrow">Easy version</div>
+            <h2 id="ez-song-title"></h2>
+            <p>The app makes a new song from this song. The right hand plays the tune. The left hand plays one key or 3 keys together. The first song does not change.</p>
+            <p id="ez-level-text" class="muted"></p>
+            <div class="btn-row">
+              <button id="ez-level" class="btn primary btn-lg">Make the easy version for my level</button>
+            </div>
+          </div>
+
+          <div class="card ez-options">
+            <div class="card-eyebrow">Or select the changes</div>
+            <div class="ez-grid">
+              <div class="pr-group">
+                <span class="pr-label" id="ez-left-label">The left hand plays</span>
+                <div class="segmented" id="ez-left" role="radiogroup" aria-labelledby="ez-left-label">
+                  <button class="seg" role="radio" aria-checked="false" data-value="none">Nothing</button>
+                  <button class="seg" role="radio" aria-checked="false" data-value="roots">One key</button>
+                  <button class="seg" role="radio" aria-checked="true" data-value="chords">3 keys together</button>
+                </div>
+                <p class="muted im-hint">"One key" is the lowest key of the 3 keys.</p>
+              </div>
+              <div class="pr-group" id="ez-change-row">
+                <span class="pr-label" id="ez-change-label">The left hand changes</span>
+                <div class="segmented" id="ez-change" role="radiogroup" aria-labelledby="ez-change-label">
+                  <button class="seg" role="radio" aria-checked="true" data-value="bar" id="ez-change-bar">Every 4 clicks</button>
+                  <button class="seg" role="radio" aria-checked="false" data-value="half" id="ez-change-half">Every 2 clicks</button>
+                </div>
+              </div>
+              <div class="pr-group">
+                <span class="pr-label" id="ez-key-label">Move the song</span>
+                <div class="segmented" id="ez-key" role="radiogroup" aria-labelledby="ez-key-label">
+                  <button class="seg" role="radio" aria-checked="true" data-value="same">No change</button>
+                  <button class="seg" role="radio" aria-checked="false" data-value="C">To C</button>
+                  <button class="seg" role="radio" aria-checked="false" data-value="G">To G</button>
+                </div>
+                <p class="muted im-hint">The app moves all notes up or down. Then the song has fewer black keys.</p>
+              </div>
+              <div class="pr-group">
+                <span class="pr-label">Speed</span>
+                <label class="switch"><input type="checkbox" id="ez-slow"><span class="switch-track"></span><span>Slower (3/4 of the speed)</span></label>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button id="ez-make" class="btn btn-lg">Make the easy version</button>
+            </div>
+            <p id="ez-error" class="im-error hidden" role="alert"></p>
+          </div>
+
+          <div id="ez-result" class="card import-done hidden">
+            <div class="card-eyebrow">Done</div>
+            <h2>The easy version is ready</h2>
+            <p id="ez-result-text"></p>
+            <div id="ez-card" class="im-card"></div>
+            <div class="btn-row">
+              <button id="ez-open-editor" class="btn btn-lg">Open in the editor</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== Song editor (Phase 5a, opened from Songs) ===================== -->
+      <section id="screen-editor" class="screen screen-editor hidden">
+        <div class="ed-head">
+          <button id="ed-back" class="btn btn-ghost" title="Back to the song list">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Back
+          </button>
+          <label class="ed-title-field"><span class="visually-hidden">Name of the song</span>
+            <input id="ed-title" class="input" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-label="Name of the song">
+          </label>
+          <span id="ed-dirty" class="pill pill-warn hidden">Not saved</span>
+          <span id="ed-count" class="pill pill-quiet"></span>
+          <div class="ed-head-buttons">
+            <button id="ed-undo" class="btn btn-sm" title="Undo the last change (Command Z)">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>Undo
+            </button>
+            <button id="ed-redo" class="btn btn-sm" title="Do the change again (Shift Command Z)">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>Redo
+            </button>
+            <button id="ed-play" class="btn btn-sm">Play from the line</button>
+            <button id="ed-practice" class="btn btn-sm" title="Save first, then practice">Practice</button>
+            <button id="ed-copy" class="btn btn-sm">Save as my copy</button>
+            <button id="ed-save" class="btn btn-sm primary">Save</button>
+          </div>
+        </div>
+        <p id="ed-readonly" class="ed-readonly muted hidden">This song is part of the app. You can change it, then select "Save as my copy". The first song does not change.</p>
+        <p id="ed-message" class="ed-message hidden" role="status"></p>
+        <div class="ed-tools">
+          <div class="pr-group">
+            <span class="pr-label" id="ed-grid-label">Note steps</span>
+            <div class="segmented" id="ed-grid" role="radiogroup" aria-labelledby="ed-grid-label">
+              <button class="seg" role="radio" aria-checked="false" data-grid="1">1 click</button>
+              <button class="seg" role="radio" aria-checked="true" data-grid="0.5">1/2 click</button>
+              <button class="seg" role="radio" aria-checked="false" data-grid="0.25">1/4 click</button>
+            </div>
+          </div>
+          <label class="pr-group ed-bpm-field">
+            <span class="pr-label">Speed (clicks in 1 minute)</span>
+            <input id="ed-bpm" class="input" type="number" min="20" max="300" step="1">
+          </label>
+          <label class="pr-group ed-key-field">
+            <span class="pr-label">Key of the song</span>
+            <select id="ed-key" class="input"></select>
+          </label>
+          <div class="pr-group ed-zoom">
+            <span class="pr-label">Size</span>
+            <div class="btn-row">
+              <button id="ed-zoom-out" class="btn btn-sm" title="Show more of the song" aria-label="Show more of the song">−</button>
+              <button id="ed-zoom-in" class="btn btn-sm" title="Show more detail" aria-label="Show more detail">+</button>
+            </div>
+          </div>
+        </div>
+        <div class="ed-body">
+          <div class="ed-main">
+            <div id="ed-stage" class="ed-stage" tabindex="0" aria-label="Notes of the song. Click a note to select it.">
+              <canvas id="ed-canvas" role="img" aria-label="Notes of the song, from left to right. The high keys are at the top."></canvas>
+            </div>
+            <input id="ed-scroll" class="ed-scroll" type="range" min="0" max="0" value="0" aria-label="Move along the song">
+            <p class="muted ed-help">Click a note to select it. Drag a note to move it. Drag the right end of a note to change its length. Double-click an empty place to add a note. Press Delete to remove the selected notes. Click the strip at the top to move the line.</p>
+            <p class="muted ed-help" id="ed-keys">Keys (click the notes first): Space plays or stops. Tab or ] selects the next note, Shift+Tab or [ the note before. A adds a note at the line. The arrow keys move the selected note (Shift: 12 keys, Alt: the length), or the line when no note is selected. Delete removes the note. Escape selects no note.</p>
+          </div>
+          <aside class="ed-side">
+            <div class="card ed-card">
+              <h3>Selected notes</h3>
+              <p id="ed-sel-text" class="muted"></p>
+              <span class="pr-label">Hand</span>
+              <div class="btn-row">
+                <button id="ed-hand-r" class="btn btn-sm ed-hand-r" aria-pressed="false">Right hand</button>
+                <button id="ed-hand-l" class="btn btn-sm ed-hand-l" aria-pressed="false">Left hand</button>
+              </div>
+              <span class="pr-label">Finger</span>
+              <div class="btn-row ed-fingers" id="ed-fingers">
+                <button class="btn btn-sm" data-finger="1" aria-pressed="false">1</button>
+                <button class="btn btn-sm" data-finger="2" aria-pressed="false">2</button>
+                <button class="btn btn-sm" data-finger="3" aria-pressed="false">3</button>
+                <button class="btn btn-sm" data-finger="4" aria-pressed="false">4</button>
+                <button class="btn btn-sm" data-finger="5" aria-pressed="false">5</button>
+                <button class="btn btn-sm" data-finger="auto" aria-pressed="false" title="The app gives a finger when you save">App</button>
+              </div>
+              <span class="pr-label">Length</span>
+              <div class="btn-row">
+                <button id="ed-shorter" class="btn btn-sm">Shorter</button>
+                <button id="ed-longer" class="btn btn-sm">Longer</button>
+                <button id="ed-delete" class="btn btn-sm ed-delete">Remove</button>
+              </div>
+            </div>
+            <div class="card ed-card">
+              <h3>The line, parts and the loop</h3>
+              <p id="ed-line-text" class="muted"></p>
+              <div class="btn-row">
+                <button id="ed-line-start" class="btn btn-sm">Line to the start</button>
+                <button id="ed-split" class="btn btn-sm">New part at the line</button>
+              </div>
+              <ul id="ed-parts" class="ed-parts"></ul>
+              <p id="ed-loop-text" class="muted"></p>
+              <div class="btn-row">
+                <button id="ed-loop-start" class="btn btn-sm">Loop starts at the line</button>
+                <button id="ed-loop-end" class="btn btn-sm">Loop ends at the line</button>
+                <button id="ed-loop-clear" class="btn btn-sm">Remove the loop</button>
+              </div>
+              <p class="muted im-hint">On the Practice page, select "Repeat my loop" to play the loop again and again.</p>
+            </div>
+          </aside>
         </div>
       </section>
 

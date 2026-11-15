@@ -9,8 +9,13 @@ average (newer results count more, SKILL_ALPHA). A skill without results has no 
 | rhythm         | play-along timing % (perfect + good)                                    |
 | right / left   | % of the notes of that hand that the user played (play-along, wait mode) |
 | coordination   | play-along total score of runs with both hands                          |
-| chords         | % of keys-together places with all keys (play-along)                    |
-| scales, ear    | no exercises in this version (Phase 5)                                  |
+| chords         | % of keys-together places with all keys (play-along); intuition: chord shapes, |
+|                | major or minor, next chord, add chords                                  |
+| scales         | intuition: jam (% of keys from the key family)                          |
+| ear            | intuition: echo, interval, major or minor, next chord, find the tune    |
+
+An intuition result (riyaz/intuition.py, attempt kind "intuition") counts for each skill of its
+exercise (data/course/intuition.json "skills").
 
 The weakest skill picks the warm-up and the intuition exercise (riyaz/session.py).
 """
@@ -72,6 +77,10 @@ def results(store: Store, limit: int = 1000) -> dict[str, list[float]]:
                         out[k].append(float(a["accuracy"]))
         elif a["kind"] == "drill" and a["item"] == "find_key" and d.get("times"):
             out["keys"].append(float(find_key_score(d["times"], int(d.get("wrong") or 0))))
+        elif a["kind"] == "intuition" and isinstance(d.get("score"), (int, float)):
+            for k in d.get("skills") or []:
+                if k in out:
+                    out[k].append(float(d["score"]))
     return {k: v[-config.SKILL_HISTORY:] for k, v in out.items()}
 
 

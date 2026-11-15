@@ -23,18 +23,21 @@ OWN = {"Origin": "http://127.0.0.1:8020"}
 
 def test_content_loads_and_refers_correctly():
     c = course.content()
-    assert [lv["level"] for lv in c["levels"]] == [1, 2, 3]
+    assert [lv["level"] for lv in c["levels"]] == list(range(1, config.MAX_COURSE_LEVEL + 1)) == list(range(1, 9))
     ladder = [e["song_id"] for e in course.ladder_entries()]
     assert ladder == ["mary-had-a-little-lamb", "ode-to-joy", "twinkle-twinkle", "au-clair-de-la-lune", "frere-jacques",
-                      "london-bridge", "ode-to-joy-left-hand", "twinkle-twinkle-left-hand", "frere-jacques-both-hands"]
+                      "london-bridge", "ode-to-joy-left-hand", "twinkle-twinkle-left-hand", "frere-jacques-both-hands",
+                      "jingle-bells", "when-the-saints", "yankee-doodle", "happy-birthday", "amazing-grace", "clementine",
+                      "canon-in-d", "pop-loop", "minuet-in-g", "ode-to-joy-full", "scarborough-fair", "greensleeves",
+                      "aura-lee", "vande-mataram"]
     # PLAN 7.4 unlock table: the levels of the terms.
     levels = {t["id"]: t["level"] for t in c["terms"]}
     assert levels == {"finger_number": 1, "middle_c": 1, "hand_position": 1, "beat": 2, "rest": 2, "tempo": 2,
                       "bar": 3, "interval": 3, "sharp_flat": 4, "chord": 5, "major_minor": 5, "progression": 6,
                       "scale": 7}
-    # Every term of Levels 1-3 has an unlock lesson in this version; Level 4+ terms stay locked.
+    # Every term has an unlock lesson in this version (Phase 5b: Levels 4-7 too).
     for t in c["terms"]:
-        assert (t["unlocked_by"] is not None) == (t["level"] <= 3), t["id"]
+        assert t["unlocked_by"] is not None, t["id"]
     # Each skill moment: plain name, STE text, demo notes with fingers, a pass rule of 3 tries.
     for s in c["skills"].values():
         assert s["tries"] == 3 and s["name"] and s["text"] and s["steps"]
@@ -151,8 +154,8 @@ def test_course_texts_are_ste_sentences():
         if where.endswith(" title") or where.endswith(" name"):
             assert text[0].isupper() and len(text.split()) <= 8, (where, text)
             continue
-        assert text[0].isupper() and text.rstrip('"').endswith((".", ":")), (where, text)
-        for sentence in re.split(r"(?<=[.:])\s+", text):
+        assert text[0].isupper() and text.rstrip('"').endswith((".", ":", "?")), (where, text)  # "?": a question
+        for sentence in re.split(r"(?<=[.:?])\s+", text):
             # ASD-STE100: 20 words for instructions, 25 for descriptions.
             assert len(sentence.split()) <= 25, (where, sentence)
 
@@ -486,7 +489,8 @@ def test_level_1_to_2_to_3_and_bar_lines_only_at_level_3(client):
     r = run("frere-jacques-both-hands", ["R", "L"])
     assert r["level_up"] and r["level"] == 4
     st = c.get("/api/course").json()
-    assert st["all_done"] and st["user_level"] == 3 and all(lv["done"] for lv in st["levels"])
+    assert not st["all_done"] and st["user_level"] == 4 and all(lv["done"] for lv in st["levels"][:3])
+    assert st["current_song"] == "jingle-bells"  # Phase 5b: Levels 4-8 (tests/test_ladder.py goes on to 8)
     # The errors per part are kept (for "the hardest part first").
     prog = c.riyaz["store"].song_progress("mary-had-a-little-lamb")["mary-had-a-little-lamb"]
     assert prog["part_errors"]["1"] == [1, 0, 1] and prog["runs"] == 3

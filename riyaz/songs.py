@@ -154,10 +154,74 @@ def validate(raw: Any) -> Song:
     if isinstance(raw.get("credit"), str):
         song["credit"] = raw["credit"]
     # Imported songs (Phase 3a): the difficulty check and the import facts.
-    for name in ("difficulty", "import"):
+    # Phase 5a: easy versions (``version_of``), the editor's loop (``loop``), copies (``copy_of``).
+    for name in ("difficulty", "import", "version_of"):
         if isinstance(raw.get(name), dict):
             song[name] = raw[name]
+    loop = raw.get("loop")
+    if isinstance(loop, dict):
+        a, b = _num(loop.get("start"), "loop start"), _num(loop.get("end"), "loop end")
+        if not 0 <= a < b:
+            raise SongError("loop: start must be before end")
+        song["loop"] = {"start": a, "end": b}
+    if isinstance(raw.get("copy_of"), str):
+        song["copy_of"] = raw["copy_of"]
     return song
+
+
+def save_user_song(song: Song) -> Song:
+    """Write a song JSON file in the user songs folder (atomic). Returns the song."""
+    folder = config.user_songs_path()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{song['id']}.json"
+    out = {k: v for k, v in song.items() if k != "end"}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp.replace(path)
+    invalidate()
+    return song
+
+
+def _same_song(a: dict, b: dict) -> bool:
+    def key(s):
+        notes = [(n.get("pitch"), round(float(n.get("start", 0)), 4), round(float(n.get("dur", 0)), 4),
+                  n.get("hand"), n.get("finger")) for n in s.get("notes") or []]
+        return (s.get("title"), s.get("bpm"), s.get("key"), sorted(notes, key=str),
+                [(p.get("start"), p.get("end"), p.get("name")) for p in s.get("sections") or []], s.get("loop"))
+    return key(a) == key(b)
+
+
+def free_id(song: Song) -> str:
+    """The id to save a new user song with: its own id when no other file has that id (or the
+    file has the same song), else the id with "-2", "-3", ... (an edited version or copy is
+    never written over)."""
+    folder = config.user_songs_path()
+    base = song["id"]
+    for i in range(1, 1000):
+        cand = base if i == 1 else f"{base[: 63 - len(str(i))].rstrip('-')}-{i}"
+        if cand in _builtin_ids():
+            continue
+        path = folder / f"{cand}.json"
+        if not path.is_file():
+            return cand
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(old, dict) and _same_song(old, song):
+            return cand
+    raise SongError("too many songs with the same id")
+
+
+def is_user_song(song_id: str) -> bool:
+    """True if the song file is in the user songs folder (imported, a version or a copy)."""
+    return bool(_ID_RE.match(song_id or "")) and (config.user_songs_path() / f"{song_id}.json").is_file() \
+        and song_id not in _builtin_ids()
+
+
+def _builtin_ids() -> set[str]:
+    folder = config.songs_path()
+    return {p.stem for p in folder.glob("*.json")} if folder.is_dir() else set()
 
 
 def song_dirs() -> list[Path]:
@@ -239,22 +303,45 @@ def hands_of(song: Song) -> list[str]:
     return [h for h in HANDS if h in present]
 
 
-def summary(song: Song, user_level: int = config.USER_LEVEL_DEFAULT) -> dict:
-    """The data for one song card. Imported songs also get the difficulty card text (PLAN 8.4)."""
+def summary(song: Song, user_level: int = config.USER_LEVEL_DEFAULT,
+            versions: dict[str, list[Song]] | None = None) -> dict:
+    """The data for one song card. Imported songs also get the difficulty card text (PLAN 8.4).
+
+    An easy version (Phase 5a) has ``version_of``. A song with an easy version that fits the
+    user's level says "You can play the easy version now." and names the version (``easy``).
+    """
     out = {
         "id": song["id"], "title": song["title"], "level": song["level"], "bpm": song["bpm"],
         "hands": hands_of(song), "beats": song["end"],
         "seconds": round(song["end"] * 60.0 / song["bpm"]), "note_count": len(song["notes"]),
         "notes_by_hand": {h: sum(1 for n in song["notes"] if n["hand"] == h) for h in hands_of(song)},
         "sections": song["sections"], "order": song["order"], "source": song["source"],
+        "user_song": song["source"] not in ("builtin", "course"),
     }
     if isinstance(song.get("difficulty"), dict):
         from .difficulty import card_text
 
         out["difficulty"] = {**card_text(song["difficulty"], user_level), "skills": song["difficulty"].get("skills", [])}
+    meta = song.get("version_of")
+    if isinstance(meta, dict):
+        from .simplify import changed_text
+
+        out["version_of"] = {"id": meta.get("id"), "title": meta.get("title"), "level": meta.get("level"),
+                             "changed": meta.get("changed") or 0, "changed_text": changed_text(meta)}
+    elif versions is not None and out.get("difficulty") and not out["difficulty"]["playable"]:
+        fits = [v for v in versions.get(song["id"], []) if v["level"] <= user_level]
+        if fits:
+            best = max(fits, key=lambda v: (v["version_of"].get("level") or 0, v["level"]))
+            out["easy"] = {"id": best["id"], "title": best["title"], "level": best["level"]}
+            out["difficulty"]["text"] = "You can play the easy version now."
+            out["difficulty"]["easy"] = True
     return out
 
 
 def list_summaries(user_level: int = config.USER_LEVEL_DEFAULT) -> list[dict]:
-    return sorted((summary(s, user_level) for s in load_all().values()),
+    from .simplify import versions_of
+
+    all_songs = load_all()
+    versions = versions_of(all_songs)
+    return sorted((summary(s, user_level, versions) for s in all_songs.values()),
                   key=lambda s: (s["source"] != "builtin", s["level"], s["order"], s["title"]))

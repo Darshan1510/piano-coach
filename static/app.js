@@ -12,6 +12,9 @@ import { LearnScreen, WordsScreen } from "/static/js/course.js";
 import { BasicsScreen } from "/static/js/basics.js";
 import { TodayScreen } from "/static/js/today.js";
 import { ProgressScreen } from "/static/js/progress.js";
+import { EditorScreen } from "/static/js/editor.js";
+import { EasyScreen } from "/static/js/easy.js";
+import { IntuitionScreen } from "/static/js/intuition.js";
 
 const $ = (id) => document.getElementById(id);
 const link = new Link();
@@ -36,6 +39,7 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   about: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   progress: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  ear: '<path d="M7 9a5 5 0 0 1 10 0c0 3-3 4-3 7a3 3 0 0 1-6 0"/><path d="M10 10a2 2 0 0 1 4 0"/>',
 };
 
 const NAV = [
@@ -43,6 +47,7 @@ const NAV = [
   { id: "today", label: "Today", icon: "today" },
   { id: "learn", label: "Learn", icon: "learn" },
   { id: "songs", label: "Songs", icon: "songs" },
+  { id: "intuition", label: "Ear games", icon: "ear" },
   { id: "progress", label: "Progress", icon: "progress" },
   { id: "words", label: "Words", icon: "words" },
   { id: "play", label: "Free play", icon: "play" },
@@ -67,6 +72,7 @@ buildNav();
 // Screens that are not in the sidebar: the sidebar item that stays active, and the page title.
 const SUB_SCREENS = {
   practice: { nav: "songs", title: "Practice" }, import: { nav: "songs", title: "Import a song" },
+  easy: { nav: "songs", title: "Make an easy version" }, editor: { nav: "songs", title: "Song editor" },
   basics: { nav: "learn", title: "Keyboard basics" },
 };
 const RETURN_NAV = { songs: "songs", today: "today", learn: "learn", basics: "learn" };
@@ -76,6 +82,8 @@ function show(screen) {
   if (current === "practice" && screen !== "practice") practice.hide();
   if (current === "basics" && screen !== "basics") basics.hide();
   if (current === "today" && screen !== "today") today.hide();
+  if (current === "editor" && screen !== "editor") editor.hide();
+  if (current === "intuition" && screen !== "intuition") intuitionScreen.hide();
   if (screen === "practice") SUB_SCREENS.practice.nav = RETURN_NAV[practice.returnTo] || "songs";
   current = screen;
   for (const el of document.querySelectorAll(".screen")) el.classList.add("hidden");
@@ -88,9 +96,11 @@ function show(screen) {
   if (screen === "songs") songsScreen.load();
   if (screen === "practice") practice.show();
   if (screen === "import") importScreen.show();
+  if (screen === "editor") editor.show();
   if (screen === "today") today.show();
   if (screen === "learn") learn.load();
   if (screen === "progress") progressScreen.show();
+  if (screen === "intuition") intuitionScreen.show();
   if (screen === "words") terms.load().then(() => words.render());
   if (screen === "basics") basics.show();
   renderSessionPill();
@@ -191,8 +201,38 @@ async function openSong(id, opts = {}) {
     console.error(err);
   }
 }
-const songsScreen = new SongsScreen($("song-list"), { api, onOpen: openSong, onImport: () => show("import") });
-const importScreen = new ImportScreen({ api, onOpen: openSong });
+// Phase 5a: song editor and easy versions (simplifier).
+const editor = new EditorScreen({
+  api, piano, startSound, getCourse: () => course,
+  onPractice: (id) => openSong(id), onBack: () => show("songs"),
+});
+async function openEditor(id) {
+  try {
+    await editor.open(id);
+    show("editor");
+  } catch (err) {
+    console.error(err);
+  }
+}
+const easy = new EasyScreen({
+  api, onPractice: openSong, onEdit: openEditor, getLevel: () => (course ? course.user_level : 1),
+});
+async function openEasy(id) {
+  try {
+    await easy.open(id);
+    show("easy");
+  } catch (err) {
+    console.error(err);
+  }
+}
+$("ez-back").addEventListener("click", () => show("songs"));
+for (const id of ["#ez-left", "#ez-key", "#ez-change", "#ed-grid"]) radioKeys(document.querySelector(id));
+const songsScreen = new SongsScreen($("song-list"), {
+  api, onOpen: openSong, onImport: () => show("import"), onEasy: openEasy, onEdit: openEditor,
+});
+const importScreen = new ImportScreen({ api, onOpen: openSong, onEdit: openEditor });
+window.riyaz.editor = editor;
+window.riyaz.easy = easy;
 $("songs-import").addEventListener("click", () => show("import"));
 $("im-back").addEventListener("click", () => show("songs"));
 new Set([...document.querySelectorAll("#im-grid")]).forEach(radioKeys);
@@ -220,6 +260,11 @@ const today = new TodayScreen({
 });
 window.riyaz.today = today;
 const progressScreen = new ProgressScreen({ api, terms });
+// Phase 5b: intuition exercises (PLAN 10), the "Ear" page.
+const intuitionScreen = new IntuitionScreen({
+  link, api, piano, terms, reducedMotion, celebrate, getStatus: () => status, onLearn: () => show("learn"),
+});
+window.riyaz.intuition = intuitionScreen;
 window.riyaz.progress = progressScreen;
 window.riyaz.learn = learn;
 window.riyaz.basics = basics;
@@ -272,9 +317,14 @@ link.on("course", async (e) => {
   if (e.level_up && before !== null) {
     celebrate($("page-title"));
     const next = e.level <= course.max_level ? `Now start Level ${e.level}.` : "You finished all levels in this version.";
-    await modal.show({ eyebrow: "Level done", title: `Level ${e.level_before} is done!`, tone: "party",
-      html: `<p>You finished all the songs of Level ${e.level_before}. ${next}</p>`,
-      buttons: [{ id: "ok", label: "Great", primary: true }] });
+    // PLAN 8.4: the user's songs have a new easy version for the new level.
+    const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const fresh = (e.new_versions || []).map((v) => `<p>${esc(v.text)}</p>`).join("");
+    const choice = await modal.show({ eyebrow: "Level done", title: `Level ${e.level_before} is done!`, tone: "party",
+      html: `<p>You finished all the songs of Level ${e.level_before}. ${next}</p>${fresh}`,
+      buttons: [...(e.new_versions && e.new_versions.length ? [{ id: "songs", label: "Show my songs" }] : []),
+        { id: "ok", label: "Great", primary: true }] });
+    if (choice === "songs") show("songs");
   }
 });
 

@@ -2,7 +2,13 @@
 // daily goal, practice calendar). The backend makes the plan (riyaz/session.py).
 
 import { DrillPanel } from "/static/js/drill.js";
+import { IntuitionPanel } from "/static/js/intuition.js";
 import { esc } from "/static/js/terms.js";
+
+// A course text with term marks ([[id|shown]]) as plain text (the shown words).
+function unmark(text) {
+  return String(text || "").replace(/\[\[[a-z_]+\|?([^|\]]*)[^\]]*\]\]/g, (_, shown) => shown);
+}
 
 const $ = (id) => document.getElementById(id);
 const FLAME = '<svg class="icon" viewBox="0 0 24 24"><path d="M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-6 2 1 3 2 3 4 1-2 0-5 0-8z"/></svg>';
@@ -13,7 +19,7 @@ const BLOCK = {
   warmup: { title: "Warm-up", icon: '<path d="M4 14c2-6 6-9 8-9s6 3 8 9"/><path d="M8 19h8"/>' },
   song: { title: "Your song", icon: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>' },
   review: { title: "Review", icon: '<path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v5h5"/>' },
-  intuition: { title: "Find the key", icon: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>' },
+  intuition: { title: "Ear game", icon: '<path d="M7 9a5 5 0 0 1 10 0c0 3-3 4-3 7a3 3 0 0 1-6 0"/><path d="M10 10a2 2 0 0 1 4 0"/>' },
 };
 
 export function minutesText(min) {
@@ -66,6 +72,7 @@ export class TodayScreen {
     this.stepsDone = new Set();
     this.minutes = null;
     this.panel = new DrillPanel($("today-drill"), { link, api, piano, reducedMotion });
+    this.ix = new IntuitionPanel($("today-ix"), { link, api, piano, terms, reducedMotion, celebrate });
     $("today-start").addEventListener("click", () => this.start());
     $("today-basics").addEventListener("click", () => this.showScreen("basics"));
     $("today-next").addEventListener("click", () => this.next("done"));
@@ -99,6 +106,11 @@ export class TodayScreen {
 
   hide() {
     this.panel.stop();
+    this.ix.stop();
+  }
+
+  _title(b) {
+    return b.kind === "intuition" && b.name ? unmark(b.name) : BLOCK[b.kind].title;
   }
 
   async _load() {
@@ -138,7 +150,7 @@ export class TodayScreen {
     const shares = { warmup: 0.1, song: 0.6, review: 0.15, intuition: 0.15 };
     $("today-sub").textContent = active
       ? `${total} minutes. Do the 4 steps in order. Click "Next" after each step.`
-      : `${total} minutes: a warm-up, your song, a review and a key game.`;
+      : `${total} minutes: a warm-up, your song, a review and an ear game.`;
     $("today-length-row").classList.toggle("hidden", active);
     $("today-plan").classList.toggle("is-compact", active); // while the session runs: a small strip below the block
     this._renderLength();
@@ -152,7 +164,7 @@ export class TodayScreen {
       li.className = `today-block${now ? " now" : ""}${st === "done" ? " done" : ""}${st === "skipped" ? " skipped" : ""}`;
       li.dataset.kind = b.kind;
       li.innerHTML = `<span class="today-block-icon"><svg class="icon" viewBox="0 0 24 24">${st === "done" ? OK_PATH : st === "skipped" ? SKIP_PATH : BLOCK[b.kind].icon}</svg></span>
-        <span class="today-block-main"><b>${BLOCK[b.kind].title}</b><span class="muted">${esc(this._detail(b))}</span></span>
+        <span class="today-block-main"><b>${esc(this._title(b))}</b><span class="muted">${esc(this._detail(b))}</span></span>
         <span class="today-block-min">${mins % 1 ? mins.toFixed(1) : mins} min</span>`;
       list.appendChild(li);
     });
@@ -184,13 +196,14 @@ export class TodayScreen {
     if (b.kind === "warmup") return `A short part of "${b.title}", slowly${b.focus && FOCUS[b.focus] ? `. It helps ${FOCUS[b.focus]}` : ""}`;
     if (b.kind === "song") return b.hard_part !== null && b.hard_part !== undefined ? `"${b.title}": Part ${b.hard_part + 1} first, then the whole song` : `"${b.title}"`;
     if (b.kind === "review") return `${partName(null, b.section)[0].toUpperCase()}${partName(null, b.section).slice(1)} of "${b.title}"`;
-    return "The app names a key. You press it.";
+    if (b.drill || !b.text) return "The app names a key. You press it.";
+    return unmark(b.text[0]);
   }
 
   _renderBlock() {
     const b = this.block;
     const i = this.index;
-    $("today-block-title").textContent = `${i + 1}. ${BLOCK[b.kind].title}`;
+    $("today-block-title").textContent = `${i + 1}. ${this._title(b)}`;
     $("today-block-eyebrow").textContent = `Step ${i + 1} of ${this.session.plan.blocks.length}`;
     const text = $("today-block-text");
     const steps = $("today-steps");
@@ -198,8 +211,10 @@ export class TodayScreen {
     $("today-drill-wrap").classList.toggle("hidden", !(b.kind === "warmup" || b.kind === "intuition"));
     if (b.kind === "warmup") {
       text.textContent = `Play this short part of "${b.title}" 3 times. Play slowly. Look at the finger numbers.`;
-    } else if (b.kind === "intuition") {
+    } else if (b.kind === "intuition" && b.drill) {
       text.textContent = "The app names a key. Press any key with this name on your keyboard, as fast as you can. There are 10 keys to find.";
+    } else if (b.kind === "intuition") {
+      text.innerHTML = b.text.map((t) => this.terms.markup(t)).join(" ");
     } else if (b.kind === "song") {
       text.textContent = `Practice "${b.title}". The song waits for you at each key. When the song needs a new skill, it stops and shows you the skill.`;
       b.steps.forEach((st, k) => steps.appendChild(this._stepButton(b, st, k)));
@@ -232,6 +247,7 @@ export class TodayScreen {
 
   _enterBlock() {
     this.panel.stop();
+    this.ix.stop();
     this.activityDone = false;
     this.stepsDone = new Set();
     const b = this.block;
@@ -251,9 +267,15 @@ export class TodayScreen {
       this.panel.setup({ pitches, positions: p.hand_positions, stepBeats: this._stepBeats(b) });
       $("today-drill-start").textContent = "Start";
       setTimeout(() => this._startDrill(), 0);
-    } else if (b.kind === "intuition") {
+    }
+    const game = b.kind === "intuition" && !b.drill;
+    $("today-drill").classList.toggle("hidden", game);
+    $("today-ix").classList.toggle("hidden", !game);
+    if (b.kind === "intuition" && b.drill) {
       this.panel.setup({ low: 36, high: 96 });
       $("today-drill-start").textContent = "Start";
+    } else if (game) {
+      $("today-drill-start").textContent = "Start the game";
     }
   }
 
@@ -267,6 +289,16 @@ export class TodayScreen {
     const b = this.block;
     if (!b || !this.session) return;
     $("today-drill-start").textContent = "Start again";
+    if (b.kind === "intuition" && !b.drill) {
+      try {
+        await this.ix.start({ source: "session", session_id: this.session.id, block: this.index }, {
+          onDone: () => { this.activityDone = true; this._renderTimer(); },
+        });
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
     try {
       await this.panel.start({ source: "session", session_id: this.session.id, block: this.index }, {
         onPass: () => { this.activityDone = true; this._renderTimer(); },
@@ -364,6 +396,7 @@ export class TodayScreen {
     if (!this.active) return;
     const seconds = this._elapsed();
     this.panel.stop();
+    this.ix.stop();
     this.session = await this.api(`/api/session/${this.session.id}/block`, {
       index: this.index, status, seconds,
       result: this.lastRun && this.lastRun.song_id === this.block.song_id
@@ -395,7 +428,8 @@ export class TodayScreen {
     $("today-sum-best-hint").textContent = sum.best
       ? `Keys right the first time in "${sum.best.title}"${sum.best.whole ? "" : " (one part)"}.` : "Play a song to see a result.";
     $("today-sum-streak").innerHTML = `${FLAME}<span>${sum.streak} day${sum.streak === 1 ? "" : "s"}</span>`;
-    $("today-sum-find").textContent = sum.find_key_seconds ? `Find the key: ${sum.find_key_seconds} seconds for each key.` : "";
+    $("today-sum-find").textContent = sum.find_key_seconds ? `Find the key: ${sum.find_key_seconds} seconds for each key.`
+      : sum.intuition ? `Ear game: ${Math.round(sum.intuition.score)} points of 100.` : "";
     $("today-sum-text").textContent = `You did ${sum.blocks_done} of 4 steps. Practice time today: ${minutesText(sum.day_minutes)}.`;
   }
 

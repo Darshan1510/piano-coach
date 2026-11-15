@@ -150,7 +150,7 @@ LOCKED = re.compile(r"\b(sharp|flat|major|minor|scale|interval|progression|bar|m
 UI_FILES = ("/static/js/practice.js", "/static/js/songs.js", "/static/js/hands.js", "/static/app.js",
             "/static/js/importer.js", "/static/js/terms.js", "/static/js/drill.js", "/static/js/course.js",
             "/static/js/basics.js", "/static/js/today.js", "/static/js/renderer.js", "/static/js/keyboard.js",
-            "/static/js/progress.js")
+            "/static/js/progress.js", "/static/js/editor.js", "/static/js/easy.js", "/static/js/intuition.js")
 
 
 def shown_strings(src: str) -> list[str]:
@@ -205,7 +205,7 @@ def backend_user_messages() -> list[str]:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Call) and getattr(node.func, "id", None) in (
                     "PracticeError", "HTTPException", "MidiImportError", "CourseError", "DrillError",
-                    "SessionError"):
+                    "SessionError", "SimplifyError", "EditorError", "AudioImportError", "IntuitionError"):
                 for arg in node.args:
                     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                         out.append(arg.value)
@@ -213,6 +213,11 @@ def backend_user_messages() -> list[str]:
                         out.append("".join(v.value if isinstance(v, ast.Constant) else "N" for v in arg.values))
                     elif isinstance(arg, ast.BinOp):  # "a " "b" split over lines is one Constant; a + b is not used
                         pass
+    # Phase 5a: the audio import texts are in a dict (riyaz/importers/audio_import.py).
+    from riyaz.importers import audio_import
+
+    out += [t.format(minutes=6) for t in audio_import.ERROR_TEXTS.values()] + [audio_import.NOT_AVAILABLE_TEXT]
+    out += [f"Your song 'X' has a new version for your level.", "You can play the easy version now."]
     assert len(out) >= 25
     return out
 
@@ -246,10 +251,13 @@ def test_import_midi_flow(client):
     assert r.status_code == 200, r.text
     card = r.json()["song"]
     assert card["source"] == "midi" and card["title"] == "La Native" and card["hands"] == ["R", "L"]
-    assert card["difficulty"]["text"].startswith("This song needs: ")
+    # Phase 5a (PLAN 8.4): the song is too hard for Level 1, so the app made an easy version.
+    assert card["difficulty"]["text"] == "You can play the easy version now."
+    easy = r.json()["easy"]
+    assert easy["version_of"]["id"] == card["id"] and easy["level"] <= 1 and card["easy"]["id"] == easy["id"]
     listed = client.get("/api/songs").json()
     assert listed["user_level"] == 1
-    assert [s["id"] for s in listed["songs"]][-1] == card["id"]
+    assert {s["id"] for s in listed["songs"][-2:]} == {card["id"], easy["id"]}
     song = client.get(f"/api/songs/{card['id']}").json()
     assert song["import"]["quantize"] == 16 and len(song["notes"]) == 172
     # The original file is kept next to the song.
@@ -305,5 +313,5 @@ def test_imported_song_text_has_no_locked_words(client):
         token = client.post(f"/api/import/midi?name={Path(name).name}", content=data).json()["token"]
         card = client.post(f"/api/import/midi/{token}/song", json={"parts": [0]}).json()["song"]
         song = client.get(f"/api/songs/{card['id']}").json()
-        text = " ".join([card["difficulty"]["text"]] + [s["name"] for s in song["sections"]])
+        text = " ".join([card["difficulty"]["text"], card["title"]] + [s["name"] for s in song["sections"]])
         assert not LOCKED.search(text), text

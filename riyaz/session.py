@@ -9,9 +9,9 @@ Daily session (default 20 minutes; 10, 15, 20 or 30): 4 blocks.
 - Review 15%: the spaced-repetition item that is due (riyaz/review.py), played along. Without a due
   item: one part of a done song (the song played least recently; its part with the most errors).
   Without a done song: a part of the current song.
-- Intuition 15%: the exercises of PLAN 10 are Phase 5. For now: "Find the key" (Level 1+).
-- The weakest skill (riyaz/skills.py) picks the hands of the warm-up and the focus of the
-  intuition exercise (Phase 4 has one exercise: "Find the key").
+- Intuition 15%: one exercise of PLAN 10 that is open at the user's level (riyaz/intuition.py),
+  for the weakest skill (PLAN 9.4). "Echo" uses keys from the current song (PLAN 9.1).
+- The weakest skill (riyaz/skills.py) picks the hands of the warm-up and the intuition exercise.
 
 Practice time: the time between 2 key presses counts when it is shorter than ACTIVITY_GAP_S.
 A day counts for the streak with PRACTICE_DAY_SECONDS of practice or a finished session.
@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable
 
 from . import config, review, skills, songs
-from .course import Course, get_song, ladder_entry, today
+from .course import Course, get_song, ladder_entry, plain_text, today
 from .db import Store
 
 log = logging.getLogger("riyaz.session")
@@ -330,7 +330,18 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
         review_why = "current_song"
     if not review_song.get("sections"):
         review_part = None
-    ifocus = skills.weakest(store, ["keys", "ear"]) or "keys"
+    from . import intuition
+    from .course import render_text
+
+    ipick = intuition.pick(course, store, min(level, config.MAX_COURSE_LEVEL))
+    iex = intuition.exercise(ipick["exercise"])
+    unlocked = set(store.terms())
+    if ipick["exercise"] == "find_key":
+        iblock = {"drill": {"kind": "find_key", "id": "find_key", "rounds": config.FIND_KEY_ROUNDS, "source": "find_key"}}
+    else:
+        import random as _random
+
+        iblock = {"intuition": {"id": ipick["exercise"], "song_id": song["id"], "seed": _random.randrange(1 << 30)}}
 
     blocks = [
         {"kind": "warmup", "minutes": mins["warmup"], "song_id": song["id"], "title": song["title"],
@@ -343,8 +354,9 @@ def plan(store: Store, course: Course, minutes: int | None = None, song_id: str 
         {"kind": "review", "minutes": mins["review"], "song_id": review_song["id"], "title": review_song["title"],
          "hands": review_hands, "section": review_part, "why": review_why, "mode": review_mode,
          "due": review_due},
-        {"kind": "intuition", "minutes": mins["intuition"], "exercise": "find_key", "focus": ifocus,
-         "drill": {"kind": "find_key", "id": "find_key", "rounds": config.FIND_KEY_ROUNDS, "source": "find_key"}},
+        {"kind": "intuition", "minutes": mins["intuition"], "exercise": ipick["exercise"], "focus": ipick["focus"],
+         "name": render_text(iex["name"], unlocked), "text": [render_text(x, unlocked) for x in iex["text"]],
+         "level": iex["level"], **iblock},
     ]
     return {"minutes": minutes, "level": level, "blocks": blocks, "song_id": song["id"]}
 
@@ -466,8 +478,9 @@ class Sessions:
         names = []
         for r in skills:
             sk = self.course.skill(r["skill_id"])
-            if sk and sk["name"] not in names:
-                names.append(sk["name"])
+            name = plain_text(sk["name"], set(self.store.terms())) if sk else None
+            if name and name not in names:
+                names.append(name)
         best = None
         for a in self.store.attempts(kind="song", session_id=s["id"], limit=500):
             if a["accuracy"] is None or not a["completed"]:
@@ -481,12 +494,19 @@ class Sessions:
         if fk and fk[0]["data"].get("times"):
             times = fk[0]["data"]["times"]
             find_key = round(sum(times) / len(times), 1)
+        ia = self.store.attempts(kind="intuition", session_id=s["id"], limit=50)
+        intuition = None
+        if ia and isinstance(ia[0]["data"].get("score"), (int, float)):
+            from .intuition import exercise
+
+            ex = exercise(ia[0]["item"])
+            intuition = {"id": ia[0]["item"], "score": ia[0]["data"]["score"], "level": ex["level"] if ex else None}
         st = streak(self.store.all_days(), s["day"])
         blocks = s["blocks"]
         return {"seconds": round(self.store.session(s["id"])["seconds"], 1),
                 "wall_seconds": round(ended - s["started"], 1),
                 "minutes": round(self.store.session(s["id"])["seconds"] / 60.0, 1),
-                "new_skills": names, "best": best, "find_key_seconds": find_key,
+                "new_skills": names, "best": best, "find_key_seconds": find_key, "intuition": intuition,
                 "streak": st["days"], "freeze_left": st["freeze_left"],
                 "blocks_done": sum(1 for b in blocks if b.get("status") == "done"),
                 "blocks_skipped": sum(1 for b in blocks if b.get("status") == "skipped"),

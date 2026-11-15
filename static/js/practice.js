@@ -167,7 +167,7 @@ export class PracticeScreen {
     };
     $("pr-title").textContent = song.title;
     $("pr-level").textContent = `Level ${song.level}`;
-    $("pr-hands-text").textContent = handsText(this.handsPresent, song.source);
+    $("pr-hands-text").textContent = handsText(this.handsPresent, song.source, song.level);
     $("pr-credit").textContent = song.credit || "";
     // Parts (song sections) for "Repeat a part".
     const sel = $("pr-part");
@@ -208,6 +208,7 @@ export class PracticeScreen {
       const extra = bars ? ` (${this.terms.word("bar", { plural: true })} ${Math.floor(s.start / group) + 1} to ${Math.ceil(s.end / group)})` : "";
       sel.appendChild(new Option(`Repeat ${s.name}${extra}`, String(i)));
     });
+    if (song.loop) sel.appendChild(new Option("Repeat my loop (from the editor)", "loop"));
   }
 
   show() {
@@ -240,7 +241,15 @@ export class PracticeScreen {
     for (const b of document.querySelectorAll("#pr-hands .seg")) {
       b.addEventListener("click", () => this._setOpt("hands", b.dataset.hands.split("")));
     }
-    $("pr-part").addEventListener("change", (e) => { this.opts.loop = null; this.opts.span = null; this.place = null; this._setOpt("section", e.target.value === "" ? null : Number(e.target.value)); });
+    $("pr-part").addEventListener("change", (e) => {
+      this.opts.loop = null; this.opts.span = null; this.place = null;
+      if (e.target.value === "loop" && this.song.loop) { // the loop from the song editor (Phase 5a)
+        this.opts.span = [this.song.loop.start, this.song.loop.end];
+        this._setOpt("section", null);
+        return;
+      }
+      this._setOpt("section", e.target.value === "" ? null : Number(e.target.value));
+    });
     $("pr-countin").addEventListener("change", (e) => { this._setOpt("countIn", e.target.checked); this._saveOptions(); });
     $("pr-accompany").addEventListener("change", (e) => this._setOpt("accompany", e.target.checked));
     $("pr-kbsound").addEventListener("change", (e) => this._setOpt("kbSound", e.target.checked));
@@ -716,7 +725,7 @@ export class PracticeScreen {
     if (!m) return;
     const sk = m.skill;
     this.skill = { m, atBeat, beforeStart, passed: false };
-    $("pr-skill-name").textContent = `New: ${sk.name}`;
+    $("pr-skill-name").innerHTML = `New: ${this.terms ? this.terms.markup(sk.name) : esc(sk.name)}`;
     $("pr-skill-text").innerHTML = sk.text.map((t) => `<p>${this.terms ? this.terms.markup(t) : esc(t)}</p>`).join("");
     const pitches = sk.demo.notes.map((n) => n.pitch);
     const beats = [...new Set(sk.demo.notes.map((n) => n.start))].sort((a, b) => a - b);

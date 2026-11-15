@@ -126,6 +126,25 @@ IMPORT_QUANTIZE = (8, 16)  # grid choices: 1/8 and 1/16 notes
 SECTION_BARS = 4  # imported songs: a new part every 4 bars (or at a long pause)
 USER_LEVEL_DEFAULT = 1  # a new user (the course state, riyaz/course.py, gives the real level)
 
+# --- Audio import (PLAN 11.3, Phase 5a) -------------------------------------------------------
+
+AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a")
+AUDIO_MAX_BYTES = 40 * 1024 * 1024  # about 10 minutes of MP3 or 4 minutes of CD-quality WAV
+AUDIO_MAX_SECONDS = 6 * 60  # a longer recording is not one song to practice (and takes long)
+AUDIO_MIN_SECONDS = 2.0
+AUDIO_JOBS_MAX = 4  # finished jobs that the app keeps (oldest removed)
+AUDIO_WORKER_TIMEOUT_S = 15 * 60  # the worker stops after this time
+AFCONVERT = "/usr/bin/afconvert"  # macOS: M4A (AAC) -> WAV, no ffmpeg needed
+
+
+def audio_tmp_path() -> Path:
+    """Temporary audio files (inside the data folder, removed after each import)."""
+    return data_dir() / "tmp-audio"
+
+# --- Song editor (PLAN 11.4, Phase 5a) ----------------------------------------------------------
+
+EDITOR_MAX_NOTES = 20000  # same limit as an import
+
 # --- Course, daily session and habit (PLAN 8, 9.1, 9.2, Phase 3b) ----------------------------
 
 
@@ -141,7 +160,7 @@ SONG_DONE_SPEED = 1.0
 SONG_DONE_SCORE = 80
 WAIT_DONE_MAX_LEVEL = 1  # a wait-mode run can finish a ladder song of this level or lower
 SKILL_TRIES = 3  # a skill moment passes after 3 correct tries (PLAN 8.2)
-MAX_COURSE_LEVEL = 3  # levels with content in this version
+MAX_COURSE_LEVEL = 8  # levels with content in this version (Phase 5b: Levels 4-8)
 
 SESSION_MINUTES = (10, 15, 20, 30)  # PLAN 9.1
 SESSION_MINUTES_DEFAULT = 20

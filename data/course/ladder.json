@@ -1,5 +1,5 @@
 {
- "about": "Song ladder (PLAN 8.3), Levels 1-3. A song is done at 100% speed with 80% or more of the keys right the first time (wait mode, the whole song, the hands in 'hands'). A level is done when all its songs are done. Each skill moment stops the song at 'at_beat' and the song goes on from 'resume_beat' (PLAN 8.2). Titles use plain words: the user sees them before the unlock.",
+ "about": "Song ladder (PLAN 8.3), Levels 1-8. A song is done at 100% speed with a score of 80 or more (play along; Level 1 also in wait mode), the whole song, the hands in 'hands'. A level is done when all its songs are done. Each skill moment stops the song at 'at_beat' and the song goes on from 'resume_beat' (PLAN 8.2). Titles use plain words: the user sees them before the unlock.",
  "levels": [
   {"level": 1, "title": "First songs", "text": "Use your right hand. Your hand stays in one place most of the time.",
    "songs": [
@@ -18,6 +18,35 @@
     {"song_id": "ode-to-joy-left-hand", "hands": ["L"], "skills": [{"id": "left_fingers", "at_beat": 0, "resume_beat": 0}, {"id": "bar_lines", "at_beat": 4, "resume_beat": 2}]},
     {"song_id": "twinkle-twinkle-left-hand", "hands": ["L"], "skills": [{"id": "interval", "at_beat": 2, "resume_beat": 0}]},
     {"song_id": "frere-jacques-both-hands", "hands": ["R", "L"], "skills": [{"id": "both_hands", "at_beat": 0, "resume_beat": 0}]}
+   ]},
+  {"level": 4, "title": "Move and black keys", "text": "Move your hand to new places. Play your first black key. Learn the names of the black keys.",
+   "songs": [
+    {"song_id": "jingle-bells", "hands": ["R"], "skills": [{"id": "black_key", "at_beat": 16, "resume_beat": 12}]},
+    {"song_id": "when-the-saints", "hands": ["R", "L"], "skills": [{"id": "black_names", "at_beat": 3, "resume_beat": 0}]},
+    {"song_id": "yankee-doodle", "hands": ["R"], "skills": [{"id": "hand_move", "at_beat": 16, "resume_beat": 12}]}
+   ]},
+  {"level": 5, "title": "Keys together", "text": "Your left hand plays 3 keys together. Some sound happy and some sound sad.",
+   "songs": [
+    {"song_id": "happy-birthday", "hands": ["R", "L"], "skills": [{"id": "chord_keys", "at_beat": 3, "resume_beat": 0}]},
+    {"song_id": "amazing-grace", "hands": ["R", "L"], "skills": [{"id": "happy_sad", "at_beat": 18, "resume_beat": 15}]},
+    {"song_id": "clementine", "hands": ["R", "L"], "skills": [{"id": "chord_change", "at_beat": 12, "resume_beat": 9}]}
+   ]},
+  {"level": 6, "title": "Patterns that repeat", "text": "Many songs use the same few groups of keys again and again. Play the same pattern in a new place on the keyboard.",
+   "songs": [
+    {"song_id": "canon-in-d", "hands": ["R", "L"], "skills": [{"id": "chord_pattern", "at_beat": 0, "resume_beat": 0}]},
+    {"song_id": "pop-loop", "hands": ["R", "L"], "skills": [{"id": "four_chords", "at_beat": 0, "resume_beat": 0}, {"id": "other_keys", "at_beat": 32, "resume_beat": 32}]}
+   ]},
+  {"level": 7, "title": "Longer runs", "text": "Play more than 5 keys in a row. Your thumb goes under your hand, and a finger goes over your thumb.",
+   "songs": [
+    {"song_id": "minuet-in-g", "hands": ["R", "L"], "skills": [{"id": "finger_over", "at_beat": 18, "resume_beat": 15}]},
+    {"song_id": "ode-to-joy-full", "hands": ["R", "L"], "skills": [{"id": "scale", "at_beat": 0, "resume_beat": 0}, {"id": "thumb_under", "at_beat": 3, "resume_beat": 0}]}
+   ]},
+  {"level": 8, "title": "Rhythm patterns", "text": "Your left hand plays patterns. Learn two rhythms from Indian music: one of 4 clicks and one of 6 clicks.",
+   "songs": [
+    {"song_id": "scarborough-fair", "hands": ["R", "L"], "skills": [{"id": "broken_chords", "at_beat": 0, "resume_beat": 0}]},
+    {"song_id": "greensleeves", "hands": ["R", "L"], "skills": [{"id": "dadra", "at_beat": 6, "resume_beat": 5}]},
+    {"song_id": "aura-lee", "hands": ["R", "L"], "skills": [{"id": "keherwa", "at_beat": 0, "resume_beat": 0}]},
+    {"song_id": "vande-mataram", "hands": ["R", "L"], "skills": []}
    ]}
  ]
 }

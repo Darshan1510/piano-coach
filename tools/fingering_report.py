@@ -27,14 +27,17 @@ def black_key_set() -> list[dict]:
     return [json.loads(p.read_text()) for p in sorted(BLACK_KEY_SET.glob("*.json"))]
 
 
-def report(beginner: bool = True, extra: bool = False) -> dict:
-    """extra=True scores the black-key set instead of the built-in songs."""
+def report(beginner: bool = True, extra: bool = False, max_level: int | None = None) -> dict:
+    """extra=True scores the black-key set instead of the built-in songs. Beginner mode is for
+    Levels 1-3 (PLAN 5.3): it scores only the songs of these levels. max_level limits the songs."""
+    if max_level is None:
+        max_level = 3 if beginner else 10
     rows = {}
     if extra:
         pool = black_key_set()
     else:
         pool = [s for s in sorted(songs.load_all().values(), key=lambda s: (s["level"], s["order"]))
-                if s["source"] == "builtin"]
+                if s["source"] == "builtin" and s["level"] <= max_level]
     for song in pool:
         notes = copy.deepcopy(song["notes"])
         written = {n["id"]: n["finger"] for n in notes}

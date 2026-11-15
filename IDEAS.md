@@ -33,3 +33,8 @@
 - "Practice these 3 keys" as a small drill (keys together, 3 tries) instead of a wait-mode loop.
 - Progress page: show the reviews that are due on the Today screen as well, with the date.
 - Skill model: a short history line for each skill (is it going up?).
+- Audio import: optional source separation (demucs) and a piano-only model (piano_transcription_inference) as an extra download (not installed in Phase 5a; about 400 MB).
+- Audio import: a tempo map (speed changes) from the beat tracker, instead of one speed for the whole recording.
+- Song editor: copy and paste notes; a velocity (touch) lane; play only the selected notes; zoom with the trackpad pinch.
+- Easy versions: keep more of the tune at Levels 1-3 with 2 or 3 hand positions (now one 5-finger position).
+- Song list: a filter for "Your songs" (imported, easy versions, copies) and delete/rename.

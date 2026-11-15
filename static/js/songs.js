@@ -5,11 +5,16 @@ const LEVELS = {
   1: { title: "Level 1: First songs", text: "Use your right hand. Your hand stays in one place most of the time." },
   2: { title: "Level 2: Play with the click", text: "Play at a steady speed. The app can play the left hand for you." },
   3: { title: "Level 3: The left hand joins", text: "Play with your left hand. Then play with both hands." },
+  4: { title: "Level 4: Move and black keys", text: "Move your hand to new places. Play your first black key." },
+  5: { title: "Level 5: Keys together", text: "Your left hand plays 3 keys together." },
+  6: { title: "Level 6: Patterns that repeat", text: "The same few groups of keys come again and again." },
+  7: { title: "Level 7: Longer runs", text: "Play more than 5 keys in a row." },
+  8: { title: "Level 8: Rhythm patterns", text: "Your left hand plays patterns, with two rhythms from Indian music." },
 };
 
-export function handsText(hands, source = "builtin") {
+export function handsText(hands, source = "builtin", level = 1) {
   if (hands.length === 1) return hands[0] === "R" ? "Right hand" : "Left hand";
-  if (source !== "builtin") return "Right hand and left hand";
+  if (source !== "builtin" || level === 3 || level >= 5) return "Right hand and left hand";
   return "Right hand. The app can play the left hand.";
 }
 
@@ -26,11 +31,13 @@ const ICON_NEED = '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/>';
 const ICON_NOTES = '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>';
 
 export class SongsScreen {
-  constructor(el, { api, onOpen, onImport }) {
+  constructor(el, { api, onOpen, onImport, onEasy, onEdit }) {
     this.el = el;
     this.api = api;
     this.onOpen = onOpen;
     this.onImport = onImport;
+    this.onEasy = onEasy;
+    this.onEdit = onEdit;
     this.songs = [];
   }
 
@@ -74,10 +81,18 @@ export class SongsScreen {
     group.className = "song-level song-level-mine";
     group.innerHTML = `<div class="song-level-head"><h2>Your songs</h2><p class="muted"></p></div><div class="song-grid"></div>`;
     group.querySelector("p").textContent = mine.length
-      ? "Songs that you imported. Each card tells you what the song needs."
-      : "Import a MIDI file of a song that you like. The app adds it here.";
+      ? "Songs that you imported, easy versions and your copies. Each card tells you what the song needs."
+      : "Import a MIDI or audio file of a song that you like. The app adds it here.";
     const grid = group.querySelector(".song-grid");
-    for (const s of mine) grid.appendChild(this._card(s, false));
+    // An easy version comes just after its song.
+    const order = [];
+    const versions = mine.filter((s) => s.version_of && mine.some((m) => m.id === s.version_of.id));
+    for (const s of mine) {
+      if (versions.includes(s)) continue;
+      order.push(s);
+      for (const v of versions) if (v.version_of.id === s.id) order.push(v);
+    }
+    for (const s of order) grid.appendChild(this._card(s, false));
     if (!mine.length) {
       const empty = document.createElement("article");
       empty.className = "card song-empty";
@@ -89,12 +104,17 @@ export class SongsScreen {
   }
 
   _card(s, first) {
-    return songCard(s, first, () => this.onOpen(s.id));
+    return songCard(s, first, () => this.onOpen(s.id), {
+      onEasy: this.onEasy && (() => this.onEasy(s.version_of ? s.version_of.id : s.id)),
+      onEdit: this.onEdit && (() => this.onEdit(s.id)),
+      onOpenEasy: (id) => this.onOpen(id),
+    });
   }
 }
 
 // One song card. Imported songs show the difficulty text (PLAN 8.4) and "Your song".
-export function songCard(s, first, onOpen) {
+// actions (Phase 5a): onEasy (make an easy version), onEdit (song editor), onOpenEasy(id).
+export function songCard(s, first, onOpen, actions = {}) {
   const card = document.createElement("article");
   card.className = `card song-card${first ? " song-card-first" : ""}`;
   card.dataset.song = s.id;
@@ -111,7 +131,7 @@ export function songCard(s, first, onOpen) {
     </ul>
     <button class="btn ${first ? "primary" : ""} song-open">Practice</button>`;
   card.querySelector(".song-title").textContent = s.title;
-  card.querySelector(".m-hands").textContent = handsText(s.hands, s.source);
+  card.querySelector(".m-hands").textContent = handsText(s.hands, s.source, s.level);
   card.querySelector(".m-time").textContent = lengthText(s.seconds);
   const imported = s.source && s.source !== "builtin";
   const mine = imported ? s.note_count
@@ -119,14 +139,54 @@ export function songCard(s, first, onOpen) {
   card.querySelector(".m-notes").textContent = `${mine} notes to play`;
   if (imported) {
     card.querySelector(".song-card-top").insertAdjacentHTML("beforeend", '<span class="pill pill-quiet pill-mine">Your song</span>');
+    if (s.version_of) {
+      card.querySelector(".pill-mine").textContent = "Easy version";
+      const of = document.createElement("p");
+      of.className = "song-of muted";
+      of.textContent = `An easy version of "${s.version_of.title}".${s.version_of.changed_text ? ` ${s.version_of.changed_text}` : ""}`;
+      card.querySelector(".song-title").after(of);
+    }
     if (s.difficulty) {
+      const ok = s.difficulty.playable || s.difficulty.easy;
       const need = document.createElement("p");
-      need.className = `song-need${s.difficulty.playable ? " ok" : ""}`;
-      need.innerHTML = `<svg class="icon" viewBox="0 0 24 24">${s.difficulty.playable ? ICON_OK : ICON_NEED}</svg><span></span>`;
+      need.className = `song-need${ok ? " ok" : ""}`;
+      need.innerHTML = `<svg class="icon" viewBox="0 0 24 24">${ok ? ICON_OK : ICON_NEED}</svg><span></span>`;
       need.querySelector("span").textContent = s.difficulty.text;
       card.querySelector(".song-meta").after(need);
     }
   }
+  const row = document.createElement("div");
+  row.className = "song-actions";
+  const open = card.querySelector(".song-open");
+  open.replaceWith(row);
+  row.appendChild(open);
+  if (s.easy && actions.onOpenEasy) {
+    open.classList.remove("primary");
+    const b = document.createElement("button");
+    b.className = "btn primary song-easy-open";
+    b.textContent = "Play the easy version";
+    b.addEventListener("click", (e) => { e.stopPropagation(); actions.onOpenEasy(s.easy.id); });
+    row.prepend(b);
+  }
+  // Small links under the buttons: easy version and the editor (Phase 5a).
+  const links = document.createElement("div");
+  links.className = "song-links";
+  if (imported && actions.onEasy && !(s.difficulty && s.difficulty.playable && !s.version_of)) {
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost btn-sm song-make-easy";
+    b.textContent = s.version_of ? "Other easy version" : "Make an easy version";
+    b.addEventListener("click", (e) => { e.stopPropagation(); actions.onEasy(); });
+    links.appendChild(b);
+  }
+  if (actions.onEdit) {
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost btn-sm song-edit";
+    b.textContent = "Edit the notes";
+    b.title = imported ? "Open the song in the editor" : "Open a copy of the song in the editor";
+    b.addEventListener("click", (e) => { e.stopPropagation(); actions.onEdit(); });
+    links.appendChild(b);
+  }
+  if (links.children.length) row.after(links);
   card.addEventListener("click", onOpen);
   return card;
 }

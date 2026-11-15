@@ -370,7 +370,9 @@ class AutoPlayer:
 
     def handle(self, msg: dict) -> None:
         kind = msg.get("type")
-        if kind == "practice" and msg.get("waiting") and msg.get("expected"):
+        if kind == "practice_skill" or (kind == "practice" and msg.get("paused")):
+            self.last_stop = None  # a skill moment: after it the song goes back, the same stop comes again
+        if kind == "practice" and msg.get("waiting") and msg.get("expected") and not msg.get("paused"):
             key = (msg.get("song_id"), msg.get("run"), msg.get("stop_index"))
             if key != self.last_stop:
                 self.last_stop = key
@@ -512,7 +514,11 @@ async def run_session(base: str, fp: "FakePlayer", minutes: int = 10, wrong: int
         for i, b in enumerate(s["plan"]["blocks"]):
             bt = time.perf_counter()
             info = {"kind": b["kind"]}
-            if b["kind"] in ("warmup", "intuition"):
+            if b["kind"] == "intuition" and "intuition" in b:  # Phase 5b: an ear game
+                r = await run_intuition(base, fp, b["exercise"], "correct",
+                                        body={"source": "session", "session_id": sid, "block": i})
+                info.update(exercise=b["exercise"], focus=b.get("focus"), score=r["score"], text=r["text"])
+            elif b["kind"] in ("warmup", "intuition"):
                 r = await do_drill(link, {"source": "session", "session_id": sid, "block": i})
                 info.update(drill=r["id"], wrong=r["wrong"], times=r.get("times"))
             elif b["kind"] == "song":
@@ -586,6 +592,141 @@ def run_tap(base: str, fp: "FakePlayer", shift_ms: float, jitter_ms: float, seed
     return _post(base, "/api/settings/latency/finish", {})
 
 
+# ---------------------------------------------------------------------- intuition exercises (Phase 5b)
+
+
+def _not_in(pcs: set[int], near: int) -> int:
+    """A key near `near` whose letter is not in pcs (a wrong answer)."""
+    for d in (1, -1, 2, -2, 3, -3, 5, 6):
+        if (near + d) % 12 not in pcs and 36 <= near + d <= 96:
+            return near + d
+    return near + 6
+
+
+def intuition_moves(st: dict, answer: str = "correct") -> list[dict]:
+    """The next move of a player in an intuition exercise (tools and tests): [] or one move,
+    {"keys": [pitches together]} or {"button": id} or {"tune_done": True}; "wait" = seconds after.
+    answer="correct": the right keys (the player "hears" the answer: it reads ``solution``).
+    answer="wrong": a wrong key for each try (after 2 tries the app shows the answer and goes on);
+    in "Find the tune" a wrong key first, then the right key (every key is a miss)."""
+    sol = st.get("solution") or {}
+    mode = sol.get("mode")
+    if st.get("status") not in ("answer", "jam") or not mode:
+        return []
+    keys = sol.get("keys") or []
+    step = st.get("step", 0)
+    if mode == "seq":
+        want = keys[step][0]
+        return [{"keys": [want if answer == "correct" else _not_in({want % 12}, want)]}]
+    if mode == "set":
+        return [{"keys": list(keys) if answer == "correct" else [_not_in(set(sol["pcs"]), keys[0])]}]
+    if mode == "find":
+        want = keys[step][0]
+        wrong_first = answer != "correct" and st.get("last") != "wrong"
+        return [{"keys": [_not_in({want % 12}, want) if wrong_first else want]}]
+    if mode == "tune":
+        if answer == "correct":
+            return [{"keys": [keys[step][0]]}] if step < len(keys) else []
+        own = (60, 64, 67, 72, 71, 67)
+        n = st.get("tune_count", 0)
+        return [{"keys": [own[n]]}] if n < len(own) else [{"tune_done": True}]
+    if mode == "jam":
+        pcs = set(sol["pcs"])
+        pool = [p for p in range(60, 73) if (p % 12 in pcs) == (answer == "correct")]
+        n = (st.get("jam") or {}).get("presses", 0)
+        # "after": the server time when the jam starts (keys before it do not count).
+        return [{"keys": [pool[n % len(pool)]], "wait": 0.9, "after": st.get("play_at", 0)}] if n < 14 else []
+    return []
+
+
+async def run_intuition(base: str, fp: "FakePlayer", ex_id: str, answer: str = "correct", seed: int = 1,
+                        body: dict | None = None, use_buttons: bool = False, timeout: float = 120.0,
+                        rounds: int | None = None, bars: int | None = None) -> dict:
+    """One intuition exercise in the running app, through the virtual port (PLAN 10, Phase 5
+    acceptance 3). Returns the score and the counts."""
+    import websockets
+
+    ws_url = base.replace("http://", "ws://") + "/ws"
+    async with websockets.connect(ws_url) as ws:
+        start = body or {"id": ex_id, "seed": seed, **({"rounds": rounds} if rounds else {}), **({"bars": bars} if bars else {})}
+        st = _post(base, "/api/intuition/start", start)
+        run = st["run"]
+        latest = st
+        done_key = None
+        presses = wrongs = 0
+        t0 = time.perf_counter()
+
+        async def act(state):
+            nonlocal presses
+            moves = intuition_moves(state, answer)
+            if use_buttons and state.get("choices") and state["solution"].get("choice"):
+                right = state["solution"]["choice"]
+                other = next(c["id"] for c in state["choices"] if c["id"] != right)
+                moves = [{"button": right if answer == "correct" else other}]
+            for m in moves:
+                if "button" in m:
+                    _post(base, "/api/intuition/answer", {"run": run, "choice": m["button"]})
+                    return
+                if m.get("tune_done"):
+                    await asyncio.sleep(0.2)
+                    _post(base, "/api/intuition/tune-done", {"run": run})
+                    return
+                while time.perf_counter() < m.get("after", 0):  # the app clock is perf_counter (riyaz/clock.py)
+                    await asyncio.sleep(0.01)
+                for p in m["keys"]:
+                    fp.note_on(p, 80)
+                presses += 1
+                await asyncio.sleep(0.06)
+                for p in m["keys"]:
+                    fp.note_off(p)
+                await asyncio.sleep(m.get("wait", 0.08))
+
+        while True:
+            if latest.get("status") == "done":
+                break
+            sol_mode = (latest.get("solution") or {}).get("mode")
+            key = (latest.get("round"), latest.get("tries"), latest.get("status"), latest.get("step"), latest.get("last"),
+                   (latest.get("jam") or {}).get("presses"), latest.get("tune_count"))
+            busy = sol_mode == "set" and latest.get("last") == "hit"  # keys of a chord are going down
+            if latest.get("status") in ("answer", "jam") and key != done_key and not busy:
+                done_key = key
+                await act(latest)
+            if time.perf_counter() - t0 > timeout:
+                raise TimeoutError(f"{ex_id}: no end")
+            try:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 1.0))
+            except asyncio.TimeoutError:
+                latest = _get(base, "/api/intuition/state")
+                if latest.get("run") != run:
+                    raise RuntimeError(f"{ex_id}: another exercise started")
+                continue
+            if msg.get("type") == "intuition_wrong" and msg.get("run") == run:
+                wrongs += 1
+            if msg.get("type") == "intuition" and msg.get("run") == run and msg.get("seq", 0) >= latest.get("seq", 0):
+                latest = msg
+    res = latest["result"]
+    return {"id": ex_id, "answer": answer, "score": res["score"], "right": res.get("right"),
+            "rounds": res.get("rounds") or res.get("total"), "presses": presses, "wrong_events": wrongs,
+            "seconds": round(time.perf_counter() - t0, 1), "text": res.get("text")}
+
+
+async def run_find_key(base: str, fp: "FakePlayer", answer: str = "correct", rounds: int | None = None) -> dict:
+    """"Find the key" (a drill): the right key at once, or (wrong) a wrong key and a long wait first."""
+    player = AutoPlayer(fp, delay=0.1 if answer == "correct" else 3.5, wrong=0 if answer == "correct" else 10)
+    t0 = time.perf_counter()
+    async with AppLink(base, player) as link:
+        r = await do_drill(link, {"source": "find_key", **({"rounds": rounds} if rounds else {})})
+    from riyaz.review import find_key_score
+
+    times = r["result"]["times"]
+    return {"id": "find_key", "answer": answer, "score": find_key_score(times, r["result"]["wrong"]),
+            "mean_s": round(sum(times) / len(times), 2), "wrong": r["result"]["wrong"],
+            "seconds": round(time.perf_counter() - t0, 1)}
+
+
+INTUITION_IDS = ("echo", "interval", "chord_shape", "major_minor", "next_chord", "find_melody", "add_chords", "jam")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--name", default=PORT_NAME, help="virtual port name")
@@ -617,6 +758,11 @@ def main() -> None:
     ap.add_argument("--slip-rate", type=float, default=0.0, help="play-along: share of notes on a neighbor key")
     ap.add_argument("--hard-bar", type=int, help="play-along: wrong keys in this group of clicks (1 = first)")
     ap.add_argument("--seed", type=int, default=0, help="play-along: random seed (each run adds 1)")
+    ap.add_argument("--drill", metavar="NAME",
+                    help="with --follow: do an intuition exercise (echo, interval, chord_shape, major_minor, "
+                         "next_chord, find_melody, add_chords, jam, find_key, or all)")
+    ap.add_argument("--answer", choices=("correct", "wrong"), default="correct", help="with --drill: right or wrong answers")
+    ap.add_argument("--buttons", action="store_true", help="with --drill: answer with the buttons when there are buttons")
     ap.add_argument("--tap", metavar="URL", help="do the latency check (tap with the click) in the app at URL; "
                                                  "uses --shift-ms and --jitter-ms")
     args = ap.parse_args()
@@ -632,6 +778,32 @@ def main() -> None:
             print(json.dumps(r), flush=True)
             time.sleep(args.hold)
         if not r.get("ok"):
+            raise SystemExit(1)
+        return
+
+    if args.drill:
+        if not args.follow:
+            raise SystemExit("--drill needs --follow URL")
+        sys.path.insert(0, str(ROOT))
+        from tools.measure_latency import wait_connected
+
+        names = list(INTUITION_IDS) + ["find_key"] if args.drill == "all" else [args.drill]
+        failed = 0
+        with FakePlayer(args.name, shift=args.shift, channel=args.channel - 1, vel0_note_off=not args.note_off) as fp:
+            print(f"Virtual port '{args.name}' is open.", flush=True)
+            wait_connected(args.follow, args.name)
+            for name in names:
+                if name == "find_key":
+                    r = asyncio.run(run_find_key(args.follow, fp, args.answer))
+                else:
+                    r = asyncio.run(run_intuition(args.follow, fp, name, args.answer, seed=args.seed or 1,
+                                                  use_buttons=args.buttons))
+                ok = r["score"] >= 98 if args.answer == "correct" else r["score"] <= 20
+                failed += not ok
+                print(("PASS " if ok else "FAIL ") + json.dumps(r), flush=True)
+                time.sleep(0.3)
+            time.sleep(args.hold)
+        if failed:
             raise SystemExit(1)
         return
 

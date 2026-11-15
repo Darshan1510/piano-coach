@@ -4,6 +4,99 @@
 
 - **Stage:** Phase 4 review fixes (2026-11-14), after Phase 4 (2026-11-14): play-along, scores, live feedback, after-run findings, automatic adapt, spaced repetition, skill model, Progress page. Not committed (the user reviews, then commits). Before: Phase 3, commit 81efb00.
 - **Next:** Phase 5 (course Levels 4-8, intuition exercises, simplifier, audio import, song editor).
+- **Stage: Phase 5a** done (2026-11-14): simplifier, easy versions, song editor, audio import. Not committed. **Next: Phase 5b** (Levels 4-8, intuition exercises).
+- **Stage: Phase 5 review fixes** done (2026-11-14), see below. Not committed. **Next:** user review, then Phase 6.
+- **Stage: Phase 5b** done (2026-11-14): course Levels 4-8 (13 songs, 15 skill moments, term unlocks), intuition exercises (8 games + "Find the key"), "Ear games" page, daily-session ear game. Not committed. **Next:** user review of Phase 5 (5a + 5b), then Phase 6.
+
+## Phase 5 review fixes (2026-11-14)
+
+Details and reasons: `DECISIONS.md` "Phase 5 review fixes". Not committed.
+
+- 5a: A1 no key in both hands (Level 1-3 left position below the right position + clash removal), A2 skyline keeps a held higher note, A3 changed-note count (`version_of.changed`) + card text "Some notes are different, so that one hand position plays the song." + key choice with more kept note names + no forced version after an audio import, A4 `songs.free_id` (-2, -3 ...) for versions and copies, A5 per-key overlap trim in the editor check, A6 own part names stay, A7 editor keys only with focus on the notes (Space, Tab/[ ], A, arrows, Delete, Escape; help line), A8 `NUMBA_CACHE_DIR`, A9 one audio import at a time, tmp-audio cleaned at start, worker stops when the app stops.
+- 5b: B1 next-chord pairs shuffled, B2 one key activity at a time (`server.stop_others`), B3 round dots, B4 find-the-tune round first try, B5 Mac clicks with the keyboard speaker, B6 answer buttons kept, B7 sound queue (0.5 s look-ahead), B8 "the black key right of A".
+- Songs: When the Saints, Amazing Grace (Excell 1900), Clementine rhythm (flutetunes MIDI), Scarborough Fair, Aura Lee (verse + refrain, flutetunes MIDI), Yankee Doodle fingering + `hand_move` at beat 16 (skill text and demo changed). **Vande Mataram added** (Tagore tune, Swarabitan 46, first part, Level 8 4th song, "Check by ear"). `tests/test_ladder.py` uses literal source data.
+- Tool fix: `fake_player.AutoPlayer` presses the same stop again after a skill moment (the session run got stuck at Greensleeves' mid-song moment; old tool bug, not an app bug).
+
+### Results (2026-11-14)
+
+`uv run pytest`: **499 passed** (201 s, with the CoreMIDI tests; 18 new). `make build-mac`: OK, **286 MB**.
+
+| Check | Result |
+|---|---|
+| 1. Bach → Level-5 version (source + frozen) | level 5, 167 notes; wait PASS (83 stops, 0 wrong), play-along **100** (167/167) |
+| 2. Audio import, PD recording (source + frozen) | 943 notes, worker 8.8 s; easy version L1; editor save; wait PASS (224 stops) |
+| 3. Ear games, fake player (real CoreMIDI) | 8 games + find the key: right **100**, wrong **0** each |
+| Changed songs, wait + play-along | when-the-saints, yankee-doodle, amazing-grace, clementine, scarborough-fair, aura-lee, vande-mataram: wait PASS (1 wrong key each, 0 advanced), play-along **100** each. Frozen: Vande Mataram wait PASS (103 stops) |
+| Daily session at Level 8 | 4/4 blocks; ear game add chords 100 |
+| WKWebView (hidden window) | editor keys 13/13 PASS (Tab, ] ], [, arrows, line move, A, Delete, Space play/stop, keys on a button do nothing, help line); jam Back: 0 sound events after Back, 0 planned > 0.6 s later; restart: sound again, clicks in order, no event > 0.6 s early. No JS errors. the scratchpad folder (`phase5fix/shots/`) |
+
+All runs used `RIYAZ_PORT_FILTER` with unique virtual ports ("Riyaz Fake Keyboard R1*/RF*/S1/T1/V1/W1/Y1/Z1/Q1/P1") and temp data folders; the real port was never opened.
+
+### Open issues (Phase 5 review fixes)
+
+- Vande Mataram: check by ear (grace notes left out; LH drone and speed are the app's choice).
+- Raghupati Raghav: no reliable source; still not in the app.
+- When the Saints bars 12-13 and Scarborough Fair line 3 follow the reviewer's notes (no file source fetched).
+- Ear-game sound still not heard by the builder (Mac sound was recorded by a stub in the check).
+
+## Phase 5b (2026-11-14): course Levels 4-8, intuition exercises
+
+Details and reasons: `DECISIONS.md` "Phase 5b". Not committed.
+
+- Songs (13, `tools/make_ladder_songs.py` -> `data/songs/`): L4 Jingle Bells (F), When the Saints (F), Yankee Doodle (F, replaces Saare Jahan Se Achha); L5 Happy Birthday, Amazing Grace, Clementine (replaces Raghupati Raghav); L6 Canon in D (easy pattern), Pop loop C G Am F (+ from G); L7 Minuet in G (first part), Ode to Joy (whole song, both hands, with the 8-key walk); L8 Scarborough Fair (broken chords), Greensleeves (dadra), Aura Lee (keherwa, replaces Vande Mataram). Hand-written fingering, hand positions from the fingers.
+- Course: `ladder.json` Levels 4-8, 15 new skill moments, unlocks sharp/flat (L4), chord + major/minor (L5), progression (L6), scale (L7); `MAX_COURSE_LEVEL = 8`. Skill names with term marks render correctly in lists and the skill card.
+- Intuition (`riyaz/intuition.py`, `data/course/intuition.json`, `/api/intuition*`): echo, interval, chord shapes, major or minor, next chord, find the tune, add chords, jam (+ "Find the key" drill). Mac sound or keyboard speaker (echo guard). Results feed the skill model (ear, chords, scales, keys). Daily session: the ear game for the weakest skill among the open games.
+- UI: NAV "Ear games" (`static/js/intuition.js`), Today uses the same panel; Songs page level titles 4-8; compact skill card.
+- Simplifier: `riyaz/patterns.py` (Level 6 loop pattern, Level 8 keherwa/dadra) with one hook in `simplify.make_version`.
+- Tools: `fake_player.py --drill NAME|all --follow URL --answer correct|wrong [--buttons]`; `--session` does the ear game too.
+
+### Results (2026-11-14)
+
+`uv run pytest`: **472 passed** (186 s, with the CoreMIDI tests; new: `tests/test_ladder.py` 85, `tests/test_intuition.py` 39, 1 CoreMIDI test). `make build-mac`: OK, **286 MB**.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Each intuition exercise with the fake player (acceptance 3) | **Pass** | Real CoreMIDI, source app, full length: echo, interval, chord shapes, major or minor, next chord, find the tune, add chords, jam: right answers **100** each, wrong answers **0** each (2 wrong tries per round -> answer shown); find the key 100 / 0. pytest CoreMIDI test (1 round each, both answers, buttons too) and 39 fake-clock unit tests. |
+| 2a. New songs: wait mode + play-along | **Pass** | Real CoreMIDI, source app, ladder hands: 13/13 completed in wait mode (1 wrong key each, 0 advanced), play-along **100** each (0 missed, mean error 0.3-0.9 ms). Fake clock: wait 13/13, play-along ≥ 98 (R and ladder hands). |
+| 2b. Level progression 3 -> 8, term unlocks, sharp/flat from Level 4 | **Pass** | `test_level_3_to_8_and_all_done` (level 4..8 up, then all done, user level 8), `test_terms_unlock_at_their_levels...` (sharp_flat 4, chord 5, major_minor 5, progression 6, scale 7), `test_sharp_and_flat_names_only_after_the_level_4_moment`, Rule 6 (+ skipped-moment) tests over all new texts. |
+| 3. Melodies vs the PD tunes | **Pass (from memory + oracle)** | First phrase keys + counts for 11 songs; Ode (whole) = L1 tune + B part; music21: key signature, LH chord names, chord fits the tune key in ≥ 60% of groups; DP fingering agrees 75-100%. See DECISIONS. |
+| 4. Daily session at Level 8 with the ear game | **Pass** | Real CoreMIDI, `run_session` 10 min: warm-up, song (Scarborough Fair, broken-chord moment), review, ear game "find the tune" (focus ear) 100; 4/4 steps done, summary has the ear game. |
+| Frozen app | **Pass** | `dist/Riyaz.app --server`: chord shapes 100, jam 100, Greensleeves wait mode PASS (104 stops). |
+| Screenshots (dark + light) | **Done** | Ear games page (Level 5: 4 locked), major or minor (answer, wrong, shown), chord shapes (+ result), jam, add chords, Happy Birthday chord skill moment, Learn ladder (L4-5, L7-8), Today plan. No JS errors, no horizontal scroll. Fixed after the first look: skill card keyboard was cut off (card compacted), a Tone.js error at a second jam (old clicks now cancelled), "Right hand. The app can play the left hand." on both-hands songs, Songs page level titles 4-8. the scratchpad folder (`phase5b/shots/`) |
+
+Real keyboard: all runs used `RIYAZ_PORT_FILTER` with unique virtual ports ("Riyaz Fake Keyboard G1/H1/I1/I2/J1/K1") and temp data folders; the real port was never opened.
+
+### Open issues (Phase 5b)
+
+- Not in the app (no reliable source offline): Raghupati Raghav (Paluskar tune) and Vande Mataram (Tagore 1896 tune). Replaced by Clementine and Aura Lee. Add them from a checked transcription.
+- Tunes checked from memory + music21 only, not against a printed source: medium confidence for Scarborough Fair line 3 and the Clementine rhythm. Listen and fix in the song editor if needed.
+- Sound of the ear games not heard by the builder (hidden window); keyboard-speaker output tested with a fake MIDI out only.
+- The difficulty check calls some hand moves "thumb under" (built-in songs only show it for information).
+
+## Phase 5a (2026-11-14): simplifier, easy versions, song editor, audio import
+
+Details and reasons: `DECISIONS.md` "Phase 5a". Not committed. 5b (Levels 4-8, intuition exercises) is next.
+
+- `riyaz/simplify.py`: skyline melody, triad chords per group of clicks (or half), LH block chords / root notes / none, move to C or G, 3/4 speed, fingering again (beginner up to L3, no crossings below L7); `for_level(song, N)` with level rules and stronger steps.
+- Easy versions are separate user songs (`source` simplified, `version_of`); made after each MIDI/audio import for the user's level and after each level-up ("Your song 'X' has a new version for your level."); card "You can play the easy version now." + "Play the easy version".
+- Song editor (`static/js/editor.js`, `riyaz/editor.py`): Canvas piano roll, select/drag/resize/add/delete, hand + finger, parts, loop (Practice "Repeat my loop"), speed, key, play from the line, undo/redo (60), server-side checks, built-in read-only + "Save as my copy".
+- Audio import (`riyaz/importers/audio_import.py`, `audio_worker.py`): MP3/WAV/M4A (afconvert), worker process with progress, basic-pitch (CoreML) + librosa beat track → MIDI → importer (1/16) → easy version → editor. 40 MB / 6 min limits. Base app works without the audio packages.
+- New screens: "Make an easy version" (`static/js/easy.js`), "Song editor", audio cards on the import screen. New tests: `tests/test_simplify.py` (17), `tests/test_editor.py` (21), `tests/test_audio_import.py` (11). Tools: `tools/make_test_audio.py`. Test audio: `tests/data/audio/` (Public Domain, README).
+- Downloads: audio group about **116 MB** (no demucs/torch/piano model). Test recording 1.8 MB.
+
+### Results (2026-11-14)
+
+`uv run pytest`: **347 passed** (64 s, with the CoreMIDI tests). `make build-mac`: **286 MB** `.app` (zip 119 MB) with audio; `make build-mac-base`: 43 MB.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Simplifier: 2-hand MIDI → Level-5 version | **Pass** | Bach BWV Anh. 120 (Level 7) → L5 version: level **5**, 167 notes (80 R melody + 29 LH triads), skills R, L, both, hand moves, black keys, keys together. La Native (Level 8) → L5: level 5, 117 notes. Real CoreMIDI + source app: wait mode PASS (83 stops, 0 wrong, 42.9 s), play-along **100** (167/167 perfect, mean 0.6 ms). Fake clock (pytest): both files wait complete + play-along ≥ 98 (100). |
+| 2. Audio import, public-domain recording | **Pass** | Beethoven Minuet in G (Musopen/Commons, PD, 2:24): **943 notes**, worker **2.6-3.3 s** (CoreML), 3.4-4.0 s wall; speed 123 bpm; easy version Level 1 (234 notes) opens in the editor; save works; wait mode with the fake player PASS (234 stops, 0 wrong). Synthesized Ode to Joy WAV: **30/30 notes, precision 1.0, recall 1.0, F1 1.0** (±50 ms), speed 89.1 (song 90). M4A (afconvert) import test passes. |
+| 3. Editor tests | **Pass** | 21 API tests (move, delete, add, length, hand, finger, parts, loop, speed, key, 12 validation texts, finger order, built-in read-only + copy, Origin). WKWebView driver (hidden window, real mouse/key events on the canvas): drag 3→4 / 67→69, resize 1→2, hand, finger, Delete, Cmd+Z, double-click add, new part, loop, speed, Save → server song matches; audio result opens in the editor: 11/11 PASS, no JS errors. |
+| Frozen app | **Pass** | `dist/Riyaz.app --server`: MIDI import (Bach) + L5 version (level 5); wait PASS (83 stops), play-along **100**; audio import of the PD recording: 943 notes, worker 11.3 s (first run in the bundle), easy version saved after an edit, wait PASS (234 stops). |
+| Screenshots | Done | dark + light: simplifier options/result, editor, audio progress/done, song cards, import screen. Fixed: card buttons wrapping, narrow result cards, editor head. the scratchpad folder (`phase5a/shots/`) |
+
+Real keyboard: all runs used `RIYAZ_PORT_FILTER=Riyaz Fake Keyboard` and temp data folders. Note: 2 fake-player runs one after the other with the same port name are not seen (IDEAS hot-plug note); the checks use "Riyaz Fake Keyboard A/B/C".
 
 ## Phase 4 review fixes (2026-11-14)
 
