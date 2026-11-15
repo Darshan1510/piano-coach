@@ -15,31 +15,21 @@ Riyaz is Hindi/Urdu for "daily practice".
 | ![Free play](docs/screenshots/free-play-dark.png) Free play: the keys you press, the name of the keys together, and a recorder. | ![Home, light theme](docs/screenshots/home-light.png) Home in the light theme. |
 | ![Practice, light theme](docs/screenshots/practice-light.png) Play along in the light theme. | |
 
-Phase 1: MIDI connection, setup and calibration, a live 61-key keyboard on the screen with note
-names and chord names, and a Mac piano sound.
-Phase 2: 6 built-in songs (Levels 1-2), falling notes with finger numbers and a hand
-outline, Watch and Play (wait) modes, hands, speed, the click, count-in and "Repeat a part".
-Phase 3a: MIDI file import (Songs → "Import a song") with track choice, hand split,
-automatic fingering, chords, key and a difficulty check on each imported song card.
-Phase 3b: Today (a daily session: warm-up, song, review, "Find the key", with a
-timer and an end summary), Learn (keyboard basics and the song ladder, Levels 1-3, with skill
-moments inside the songs), Words (the music words that you learned), streak with a weekly
-streak freeze, daily goal, practice calendar and an optional Mac reminder (Settings).
-Phase 4: "Play along" (the song does not wait; points, stars, green/yellow/red keys,
-one tip at a time), "Continue from here" when you stop, after-run findings with a small picture
-of the place, "Show me" and a practice button, automatic speed changes, spaced repetition of
-learned song parts, a skill model, and the Progress page (skills, calendar, results over time).
-Phase 5a: song simplifier (easy versions for your level), song editor, audio import.
-Phase 5b: course Levels 4-8 (13 more songs: black keys, keys together, patterns,
-longer runs, rhythm feels keherwa and dadra) with their skill moments and words, and "Ear games"
-(echo, the jump between 2 keys, shapes of 3 keys, happy or sad, what comes next, find the tune,
-add keys together to a tune, jam). The daily practice picks one game for your weakest skill.
-Phase 6 (this version): Levels 9-10 (Für Elise opening, Amazing Grace with smooth changes,
-lead sheets: only the tune and the names, you make the left hand; a song in a new key family),
-soft and loud tips, an optional foot switch lesson (hidden without a foot switch), a recorder in
-Free play (play back, save as a MIDI file, open as a song), a weekly summary on the Progress page
-with an optional local coach (Ollama, off by default; not installed), and the release installer.
-See `PLAN.md` and `PROGRESS.md`.
+## Features
+
+- **Keyboard setup:** MIDI connection, calibration, a live 61-key keyboard on the screen with note and chord names, and a Mac piano sound.
+- **Songs:** built-in public-domain songs from Level 1 to Level 10, with falling notes, finger numbers and a hand outline.
+- **Practice modes:** Watch, Play (the song waits for you) and Play along (the song does not wait), with hands, speed, the click, count-in and "Repeat a part".
+- **Feedback:** points, stars, green/yellow/red keys, one tip at a time, findings after each run with "Show me", and automatic speed changes.
+- **Today:** a daily session with a warm-up, your song, a review and an ear game, plus a streak, a daily goal and a practice calendar.
+- **Learn:** keyboard basics and a song ladder from Level 1 to Level 10, with skill moments inside the songs and the music words you learned.
+- **Ear games:** echo, the jump between 2 keys, happy or sad, what comes next, find the tune, add keys together, and jam.
+- **Your own left hand:** lead sheets show only the tune and the chord names; you make the left hand. Also play a learned song in a new key.
+- **Touch:** soft and loud tips, and an optional foot switch lesson (hidden when no foot switch is connected).
+- **Import:** MIDI files (hand split, fingering, chords and a difficulty check) and audio files; easy versions of any song for your level.
+- **Song editor:** change notes, fingers, hands and parts on a piano roll.
+- **Free play:** a recorder that plays back and saves MIDI files.
+- **Progress:** skills, results over time, and a weekly summary, with an optional local coach (Ollama, off by default).
 
 ## Install (release build)
 
@@ -151,7 +141,7 @@ Progress (sessions, song results, course, words, practice time) is in
 
 `music21` is in the dev group only (test oracle). It is never in `Riyaz.app`.
 
-### Audio import (Phase 5a)
+### Audio import
 
 The audio packages are in the uv group `audio` (basic-pitch with its CoreML model, librosa, numpy,
 scipy; about 116 MB download, all in `.venv`). `uv sync` installs them. Without them
@@ -162,7 +152,7 @@ uv run tools/make_test_audio.py ode-to-joy /tmp/ode.wav     # a test WAV from a 
 uv run python -m riyaz.importers.audio_worker IN.wav OUT.json   # the worker alone (progress on stdout)
 ```
 
-No demucs, torch or piano-transcription model (not installed; see `DECISIONS.md`, Phase 5a).
+No demucs, torch or piano-transcription model (not installed; see `DECISIONS.md`).
 
 ## Build
 
